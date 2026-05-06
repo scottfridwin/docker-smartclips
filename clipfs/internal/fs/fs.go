@@ -5,32 +5,32 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"sync"
-	"sync/atomic"
 	"syscall"
-	"time"
 
 	"clipfs/config"
+	"clipfs/internal/cache"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
-
-const evictionTTL = 5 * time.Minute
 
 type Root struct {
 	fs.Inode
 	clips []config.Clip
 	uid   uint32
 	gid   uint32
+	cache *cache.DiskCache
 }
 
-func NewRoot(clips []config.Clip, uid, gid int) *Root {
+func NewRoot(clips []config.Clip, uid, gid int, diskCache *cache.DiskCache) *Root {
 	return &Root{
 		clips: clips,
 		uid:   uint32(uid),
 		gid:   uint32(gid),
+		cache: diskCache,
 	}
 }
 
@@ -61,30 +61,41 @@ type VirtualFile struct {
 	clip config.Clip
 	root *Root
 
-	mu         sync.Mutex
-	data       atomic.Pointer[[]byte] // lock-free reads after generation
-	generated  atomic.Bool
-	lastAccess atomic.Int64 // unix timestamp of last read
+	mu       sync.Mutex
+	cachePath string
+	cacheSize int64
+	ready     bool
+}
+
+func (f *VirtualFile) cacheKey() string {
+	return fmt.Sprintf("%s:%.2f-%.2f", f.clip.Input, f.clip.Start, f.clip.End)
 }
 
 func (f *VirtualFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	if err := f.ensureGenerated(); err != nil {
+	if err := f.ensureCached(); err != nil {
 		return nil, 0, syscall.EIO
 	}
-	f.touch()
-	return f, 0, 0
+	return nil, fuse.FOPEN_KEEP_CACHE, 0
 }
 
-func (f *VirtualFile) ensureGenerated() error {
-	if f.generated.Load() {
-		return nil
+func (f *VirtualFile) ensureCached() error {
+	// Fast path: already cached
+	if f.ready {
+		if path, size, ok := f.root.cache.Get(f.cacheKey()); ok {
+			f.cachePath = path
+			f.cacheSize = size
+			return nil
+		}
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Double-check after acquiring lock
-	if f.generated.Load() {
+	// Double-check after lock
+	if path, size, ok := f.root.cache.Get(f.cacheKey()); ok {
+		f.cachePath = path
+		f.cacheSize = size
+		f.ready = true
 		return nil
 	}
 
@@ -93,59 +104,49 @@ func (f *VirtualFile) ensureGenerated() error {
 		return err
 	}
 
-	f.data.Store(&data)
-	f.generated.Store(true)
-	f.touch()
+	path, err := f.root.cache.Put(f.cacheKey(), data)
+	if err != nil {
+		return err
+	}
 
-	// Start eviction timer
-	go f.evictionLoop()
-
+	f.cachePath = path
+	f.cacheSize = int64(len(data))
+	f.ready = true
 	return nil
 }
 
-func (f *VirtualFile) touch() {
-	f.lastAccess.Store(time.Now().Unix())
-}
-
-func (f *VirtualFile) evictionLoop() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		if !f.generated.Load() {
-			return
-		}
-		lastAccess := time.Unix(f.lastAccess.Load(), 0)
-		if time.Since(lastAccess) > evictionTTL {
-			f.mu.Lock()
-			f.data.Store(nil)
-			f.generated.Store(false)
-			f.mu.Unlock()
-			log.Printf("Evicted cached data for %s (idle > %v)", f.name, evictionTTL)
-			return
-		}
-	}
-}
-
 func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	f.touch()
-
-	dataPtr := f.data.Load()
-	if dataPtr == nil {
+	if !f.ready {
 		return fuse.ReadResultData(nil), syscall.EIO
 	}
-	data := *dataPtr
 
-	if off >= int64(len(data)) {
+	// Read directly from disk cache file
+	file, err := os.Open(f.cachePath)
+	if err != nil {
+		// Cache file was evicted between open and read; regenerate
+		f.ready = false
+		if err := f.ensureCached(); err != nil {
+			return fuse.ReadResultData(nil), syscall.EIO
+		}
+		file, err = os.Open(f.cachePath)
+		if err != nil {
+			return fuse.ReadResultData(nil), syscall.EIO
+		}
+	}
+	defer file.Close()
+
+	if off >= f.cacheSize {
 		return fuse.ReadResultData(nil), 0
 	}
 
-	end := int(off) + len(dest)
-	if end > len(data) {
-		end = len(data)
+	end := int64(len(dest))
+	if off+end > f.cacheSize {
+		end = f.cacheSize - off
 	}
 
-	return fuse.ReadResultData(data[off:end]), 0
+	buf := make([]byte, end)
+	n, _ := file.ReadAt(buf, off)
+	return fuse.ReadResultData(buf[:n]), 0
 }
 
 // --------------------
@@ -153,6 +154,8 @@ func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Re
 // --------------------
 
 func (f *VirtualFile) generate() ([]byte, error) {
+	log.Printf("Generating clip: %s", f.name)
+
 	cmd := exec.Command(
 		"ffmpeg",
 		"-hide_banner",
@@ -187,14 +190,10 @@ func formatTime(seconds float64) string {
 // --------------------
 
 func (f *VirtualFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	if f.generated.Load() {
-		dataPtr := f.data.Load()
-		if dataPtr != nil {
-			out.Size = uint64(len(*dataPtr))
-		} else {
-			out.Size = 1 << 62
-		}
+	if f.ready {
+		out.Size = uint64(f.cacheSize)
 	} else {
+		// Large dummy size so readers don't bail on 0 bytes
 		out.Size = 1 << 62
 	}
 

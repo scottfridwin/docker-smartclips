@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"clipfs/config"
+	"clipfs/internal/cache"
 	clipfs "clipfs/internal/fs"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -52,7 +53,16 @@ func main() {
 	uid := getEnvInt("PUID", 0)
 	gid := getEnvInt("PGID", 0)
 
-	root := clipfs.NewRoot(clips, uid, gid)
+	cachePath := getEnv("CLIPFS_CACHE_DIR", "/tmp/clipfs-cache")
+	cacheMaxMB := getEnvInt("CLIPFS_CACHE_MAX_MB", 1024)
+
+	diskCache, err := cache.New(cachePath, cacheMaxMB)
+	if err != nil {
+		log.Fatalf("Failed to initialize disk cache: %v", err)
+	}
+	log.Printf("Disk cache: %s (max %d MB)", cachePath, cacheMaxMB)
+
+	root := clipfs.NewRoot(clips, uid, gid, diskCache)
 
 	// ✅ IMPORTANT: use fs.Mount but DO NOT rely on extra heuristic flags
 	server, err := fs.Mount(mountPath, root, &fs.Options{

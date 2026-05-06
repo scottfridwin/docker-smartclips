@@ -24,10 +24,13 @@ services:
       - ./clips.json:/config/clips.json:ro
       - /path/to/media:/media:ro
       - /mnt/smartclips:/mnt/clipfs:rshared
+      - smartclips-cache:/cache
     environment:
       - CLIPFS_CONFIG=/config/clips.json
       - CLIPFS_MOUNT=/mnt/clipfs
       - CLIPFS_MEDIA=/media
+      - CLIPFS_CACHE_DIR=/cache
+      - CLIPFS_CACHE_MAX_MB=2048
       - PUID=1000
       - PGID=1000
     restart: unless-stopped
@@ -47,6 +50,8 @@ sudo mount --make-shared /mnt/smartclips
 | `CLIPFS_CONFIG` | `clips.json` | Path to the clip definitions JSON file |
 | `CLIPFS_MOUNT` | `/mnt/clipfs` | Mountpoint for the FUSE filesystem |
 | `CLIPFS_MEDIA` | *(empty)* | If set, prepended to relative `input` paths in clips.json |
+| `CLIPFS_CACHE_DIR` | `/tmp/clipfs-cache` | Directory for the disk-backed clip cache |
+| `CLIPFS_CACHE_MAX_MB` | `1024` | Maximum cache size in MB. LRU eviction when exceeded. |
 | `PUID` | `0` | UID reported for virtual file ownership |
 | `PGID` | `0` | GID reported for virtual file ownership |
 
