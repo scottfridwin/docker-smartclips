@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,15 @@ func Load(path string, mediaPrefix string) ([]Clip, error) {
 	var clips []Clip
 	if err := json.Unmarshal(data, &clips); err != nil {
 		return nil, err
+	}
+
+	// Validate unique output names
+	seen := make(map[string]bool, len(clips))
+	for _, c := range clips {
+		if seen[c.Output] {
+			return nil, fmt.Errorf("duplicate output name: %q", c.Output)
+		}
+		seen[c.Output] = true
 	}
 
 	// If a media prefix is set, prepend it to relative input paths

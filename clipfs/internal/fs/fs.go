@@ -62,7 +62,7 @@ type VirtualFile struct {
 	clip config.Clip
 	root *Root
 
-	mu       sync.Mutex
+	mu        sync.RWMutex
 	cachePath string
 	cacheSize int64
 	ready     bool
@@ -76,28 +76,55 @@ func (f *VirtualFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, ui
 	if err := f.ensureCached(); err != nil {
 		return nil, 0, syscall.EIO
 	}
-	return nil, fuse.FOPEN_KEEP_CACHE, 0
+
+	// Open a persistent file handle for this session
+	f.mu.RLock()
+	path := f.cachePath
+	f.mu.RUnlock()
+
+	fh, err := NewCacheFileHandle(path)
+	if err != nil {
+		// Cache may have been evicted; try once more
+		f.mu.Lock()
+		f.ready = false
+		f.mu.Unlock()
+		if err := f.ensureCached(); err != nil {
+			return nil, 0, syscall.EIO
+		}
+		f.mu.RLock()
+		path = f.cachePath
+		f.mu.RUnlock()
+		fh, err = NewCacheFileHandle(path)
+		if err != nil {
+			return nil, 0, syscall.EIO
+		}
+	}
+
+	return fh, fuse.FOPEN_KEEP_CACHE, 0
 }
 
 func (f *VirtualFile) ensureCached() error {
-	// Fast path: already cached
+	f.mu.RLock()
 	if f.ready {
-		if path, size, ok := f.root.cache.Get(f.cacheKey()); ok {
-			f.cachePath = path
-			f.cacheSize = size
+		_, _, ok := f.root.cache.Get(f.cacheKey())
+		f.mu.RUnlock()
+		if ok {
 			return nil
 		}
+	} else {
+		f.mu.RUnlock()
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	// Double-check after lock
-	if path, size, ok := f.root.cache.Get(f.cacheKey()); ok {
-		f.cachePath = path
-		f.cacheSize = size
-		f.ready = true
-		return nil
+	if f.ready {
+		if path, size, ok := f.root.cache.Get(f.cacheKey()); ok {
+			f.cachePath = path
+			f.cacheSize = size
+			return nil
+		}
 	}
 
 	// Get the target path and have ffmpeg write directly to it
@@ -120,39 +147,51 @@ func (f *VirtualFile) ensureCached() error {
 	return nil
 }
 
-func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	if !f.ready {
-		return fuse.ReadResultData(nil), syscall.EIO
-	}
+// --------------------
+// CacheFileHandle - persistent file handle for reads
+// --------------------
 
-	// Read directly from disk cache file
-	file, err := os.Open(f.cachePath)
+type CacheFileHandle struct {
+	file *os.File
+	size int64
+}
+
+func NewCacheFileHandle(path string) (*CacheFileHandle, error) {
+	file, err := os.Open(path)
 	if err != nil {
-		// Cache file was evicted between open and read; regenerate
-		f.ready = false
-		if err := f.ensureCached(); err != nil {
-			return fuse.ReadResultData(nil), syscall.EIO
-		}
-		file, err = os.Open(f.cachePath)
-		if err != nil {
-			return fuse.ReadResultData(nil), syscall.EIO
-		}
+		return nil, err
 	}
-	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, err
+	}
+	return &CacheFileHandle{file: file, size: info.Size()}, nil
+}
 
-	if off >= f.cacheSize {
+func (fh *CacheFileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	if off >= fh.size {
 		return fuse.ReadResultData(nil), 0
 	}
 
 	end := int64(len(dest))
-	if off+end > f.cacheSize {
-		end = f.cacheSize - off
+	if off+end > fh.size {
+		end = fh.size - off
 	}
 
-	buf := make([]byte, end)
-	n, _ := file.ReadAt(buf, off)
+	buf := dest[:end]
+	n, _ := fh.file.ReadAt(buf, off)
 	return fuse.ReadResultData(buf[:n]), 0
 }
+
+func (fh *CacheFileHandle) Release(ctx context.Context) syscall.Errno {
+	fh.file.Close()
+	return 0
+}
+
+// Ensure CacheFileHandle implements the needed interfaces
+var _ = (fs.FileReader)((*CacheFileHandle)(nil))
+var _ = (fs.FileReleaser)((*CacheFileHandle)(nil))
 
 // --------------------
 // ffmpeg generation
@@ -193,12 +232,14 @@ func formatTime(seconds float64) string {
 // --------------------
 
 func (f *VirtualFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	f.mu.RLock()
 	if f.ready {
 		out.Size = uint64(f.cacheSize)
 	} else {
 		// Large dummy size so readers don't bail on 0 bytes
 		out.Size = 1 << 62
 	}
+	f.mu.RUnlock()
 
 	out.Mode = syscall.S_IFREG | 0444
 	out.Uid = f.root.uid
