@@ -26,7 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /src/clipfs /usr/local/bin/clipfs
 
-# default mount point
-RUN mkdir -p /mnt/clipfs
+RUN mkdir -p /config /media /mnt/clipfs
 
 ENTRYPOINT ["clipfs"]
+CMD []
