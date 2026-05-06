@@ -35,16 +35,12 @@ func main() {
 	server, err := fs.Mount(mountPath, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
 			AllowOther: true,
+			FsName:     "clipfs",
+			Name:       "clipfs",
 
-			// IMPORTANT: prevents dependency on fusermount identity resolution
-			FsName: "clipfs",
-			Name:   "clipfs",
-
-			// safer in container environments
-			DirectMount: true,
 			Options: []string{
-				"direct_io",
-				"kernel_cache",
+				"nonempty",
+				"default_permissions",
 			},
 		},
 	})
