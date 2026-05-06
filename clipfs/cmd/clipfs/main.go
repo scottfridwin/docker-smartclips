@@ -40,14 +40,12 @@ func main() {
 
 	root := clipfs.NewRoot(clips)
 
+	// ✅ IMPORTANT: use fs.Mount but DO NOT rely on extra heuristic flags
 	server, err := fs.Mount(mountPath, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
 			AllowOther: true,
 			FsName:     "clipfs",
 			Name:       "clipfs",
-
-			// 🔥 critical switch
-			DisableXAttrs: true,
 		},
 	})
 
@@ -57,7 +55,7 @@ func main() {
 
 	log.Println("ClipFS mounted at", mountPath)
 
-	// graceful shutdown channel
+	// graceful shutdown
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
