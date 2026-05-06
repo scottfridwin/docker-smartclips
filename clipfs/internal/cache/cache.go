@@ -73,6 +73,31 @@ func (c *DiskCache) Get(key string) (string, int64, bool) {
 
 // Put writes data to the cache under key, evicting LRU entries if needed.
 func (c *DiskCache) Put(key string, data []byte) (string, error) {
+	path := c.keyToPath(key)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return "", fmt.Errorf("cache: write %s: %w", path, err)
+	}
+	return c.Admit(key)
+}
+
+// PathFor returns the file path where a cache entry for key should be written.
+// Use this to have an external process (e.g. ffmpeg) write directly to the cache location.
+// After writing, call Admit(key) to register the entry.
+func (c *DiskCache) PathFor(key string) string {
+	return c.keyToPath(key)
+}
+
+// Admit registers a file already written at PathFor(key) into the cache,
+// performing LRU eviction if needed. Returns the path and any error.
+func (c *DiskCache) Admit(key string) (string, error) {
+	path := c.keyToPath(key)
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("cache: stat %s: %w", path, err)
+	}
+	size := info.Size()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -81,18 +106,11 @@ func (c *DiskCache) Put(key string, data []byte) (string, error) {
 		c.removeLocked(elem)
 	}
 
-	size := int64(len(data))
-
 	// Evict until there's room (if maxBytes is set)
 	if c.maxBytes > 0 {
 		for c.curBytes+size > c.maxBytes && c.order.Len() > 0 {
 			c.evictOldest()
 		}
-	}
-
-	path := c.keyToPath(key)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return "", fmt.Errorf("cache: write %s: %w", path, err)
 	}
 
 	e := &entry{key: key, size: size}

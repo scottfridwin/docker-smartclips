@@ -99,18 +99,22 @@ func (f *VirtualFile) ensureCached() error {
 		return nil
 	}
 
-	data, err := f.generate()
+	// Get the target path and have ffmpeg write directly to it
+	outPath := f.root.cache.PathFor(f.cacheKey())
+	if err := f.generate(outPath); err != nil {
+		os.Remove(outPath)
+		return err
+	}
+
+	// Register the file in the cache (handles LRU eviction)
+	path, err := f.root.cache.Admit(f.cacheKey())
 	if err != nil {
 		return err
 	}
 
-	path, err := f.root.cache.Put(f.cacheKey(), data)
-	if err != nil {
-		return err
-	}
-
+	info, _ := os.Stat(path)
 	f.cachePath = path
-	f.cacheSize = int64(len(data))
+	f.cacheSize = info.Size()
 	f.ready = true
 	return nil
 }
@@ -153,8 +157,8 @@ func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.Re
 // ffmpeg generation
 // --------------------
 
-func (f *VirtualFile) generate() ([]byte, error) {
-	log.Printf("Generating clip: %s", f.name)
+func (f *VirtualFile) generate(outPath string) error {
+	log.Printf("Generating clip: %s -> %s", f.name, outPath)
 
 	cmd := exec.Command(
 		"ffmpeg",
@@ -164,21 +168,19 @@ func (f *VirtualFile) generate() ([]byte, error) {
 		"-to", formatTime(f.clip.End),
 		"-i", f.clip.Input,
 		"-c", "copy",
-		"-f", "matroska",
-		"pipe:1",
+		"-y",
+		outPath,
 	)
 
-	var out bytes.Buffer
 	var errBuf bytes.Buffer
-	cmd.Stdout = &out
 	cmd.Stderr = &errBuf
 
 	if err := cmd.Run(); err != nil {
 		log.Printf("ffmpeg error for %s: %s", f.name, errBuf.String())
-		return nil, err
+		return err
 	}
 
-	return out.Bytes(), nil
+	return nil
 }
 
 func formatTime(seconds float64) string {
