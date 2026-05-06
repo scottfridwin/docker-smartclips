@@ -1,16 +1,16 @@
-name: Docker Publish
+name: Build (Main)
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions:
   contents: read
   packages: write
 
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,16 +27,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version
-        id: version
-        run: |
-          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+      - name: Extract SHA
+        id: meta
+        run: echo "SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
-      - name: Build and push image
+      - name: Build and push (immutable)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}:main
+            ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.SHA }}

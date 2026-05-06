@@ -1,0 +1,37 @@
+name: Promote Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+
+      - name: Extract version
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+
+      - name: Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          skopeo login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Promote image
+        run: |
+          SRC="ghcr.io/${{ github.repository }}:main"
+          DST_VERSION="ghcr.io/${{ github.repository }}:${VERSION}"
+          DST_LATEST="ghcr.io/${{ github.repository }}:latest"
+
+          skopeo copy docker://$SRC docker://$DST_VERSION
+          skopeo copy docker://$SRC docker://$DST_LATEST
