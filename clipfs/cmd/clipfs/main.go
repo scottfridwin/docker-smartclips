@@ -38,10 +38,8 @@ func main() {
 			FsName:     "clipfs",
 			Name:       "clipfs",
 
-			Options: []string{
-				"nonempty",
-				"default_permissions",
-			},
+			// 🔥 critical switch
+			EnableLocks: false,
 		},
 	})
 
