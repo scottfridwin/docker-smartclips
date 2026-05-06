@@ -39,7 +39,7 @@ func main() {
 			Name:       "clipfs",
 
 			// 🔥 critical switch
-			EnableLocks: false,
+			DisableXAttrs: true,
 		},
 	})
 
