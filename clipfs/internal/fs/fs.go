@@ -23,6 +23,7 @@ type Root struct {
 	uid   uint32
 	gid   uint32
 	cache *cache.DiskCache
+	mu    sync.RWMutex
 }
 
 func NewRoot(clips []config.Clip, uid, gid int, diskCache *cache.DiskCache) *Root {
@@ -36,19 +37,62 @@ func NewRoot(clips []config.Clip, uid, gid int, diskCache *cache.DiskCache) *Roo
 
 func (r *Root) OnAdd(ctx context.Context) {
 	for _, clip := range r.clips {
-		filename := clip.Output + ".mkv"
-		file := &VirtualFile{
-			name: filename,
-			clip: clip,
-			root: r,
-		}
-
-		inode := r.NewInode(ctx, file, fs.StableAttr{
-			Mode: syscall.S_IFREG,
-		})
-
-		r.AddChild(filename, inode, false)
+		r.addClip(ctx, clip)
 	}
+}
+
+func (r *Root) addClip(ctx context.Context, clip config.Clip) {
+	filename := clip.Output + ".mkv"
+	file := &VirtualFile{
+		name: filename,
+		clip: clip,
+		root: r,
+	}
+
+	inode := r.NewInode(ctx, file, fs.StableAttr{
+		Mode: syscall.S_IFREG,
+	})
+
+	r.AddChild(filename, inode, true)
+}
+
+// Reload updates the FUSE tree to match the new clip list.
+// Adds new clips, removes deleted clips, leaves unchanged clips alone.
+func (r *Root) Reload(clips []config.Clip) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Build maps of old and new
+	newSet := make(map[string]config.Clip, len(clips))
+	for _, c := range clips {
+		newSet[c.Output] = c
+	}
+
+	oldSet := make(map[string]config.Clip, len(r.clips))
+	for _, c := range r.clips {
+		oldSet[c.Output] = c
+	}
+
+	// Remove clips that no longer exist
+	for name := range oldSet {
+		if _, exists := newSet[name]; !exists {
+			filename := name + ".mkv"
+			r.RmChild(filename)
+			log.Printf("Reload: removed %s", filename)
+		}
+	}
+
+	// Add new clips
+	ctx := context.Background()
+	for name, clip := range newSet {
+		if _, exists := oldSet[name]; !exists {
+			r.addClip(ctx, clip)
+			log.Printf("Reload: added %s.mkv", name)
+		}
+	}
+
+	r.clips = clips
+	log.Printf("Reload: %d clips active", len(clips))
 }
 
 // --------------------

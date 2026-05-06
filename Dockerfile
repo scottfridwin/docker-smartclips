@@ -4,10 +4,9 @@ ARG TARGETARCH
 
 WORKDIR /src
 
-COPY clipfs/go.mod clipfs/go.sum ./
-RUN go mod download
-
 COPY clipfs/ .
+
+RUN go mod tidy
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
     go build -o clipfs ./cmd/clipfs

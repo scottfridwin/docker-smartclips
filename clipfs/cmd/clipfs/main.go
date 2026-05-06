@@ -6,11 +6,13 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"clipfs/config"
 	"clipfs/internal/cache"
 	clipfs "clipfs/internal/fs"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
@@ -83,5 +85,59 @@ func main() {
 		_ = server.Unmount()
 	}()
 
+	// Watch config file for hot-reload
+	go watchConfig(configPath, mediaPrefix, root)
+
 	server.Wait()
+}
+
+func watchConfig(configPath, mediaPrefix string, root *clipfs.Root) {
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		log.Printf("Warning: could not start config watcher: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	if err := watcher.Add(configPath); err != nil {
+		log.Printf("Warning: could not watch %s: %v", configPath, err)
+		return
+	}
+
+	log.Printf("Watching %s for changes", configPath)
+
+	// Debounce: editors may trigger multiple events for one save
+	var debounce *time.Timer
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) {
+				if debounce != nil {
+					debounce.Stop()
+				}
+				debounce = time.AfterFunc(500*time.Millisecond, func() {
+					clips, err := config.Load(configPath, mediaPrefix)
+					if err != nil {
+						log.Printf("Reload failed: %v", err)
+						return
+					}
+					root.Reload(clips)
+				})
+			}
+			// If the file is removed and recreated (e.g., Docker config mount),
+			// re-add the watch
+			if event.Has(fsnotify.Remove) {
+				watcher.Add(configPath)
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			log.Printf("Config watcher error: %v", err)
+		}
+	}
 }
