@@ -32,12 +32,6 @@ func main() {
 
 	root := clipfs.NewRoot(clips)
 
-	f, err := os.Open("/dev/fuse")
-	if err != nil {
-		log.Fatalf("/dev/fuse not accessible: %v", err)
-	}
-	f.Close()
-
 	server, err := fs.Mount(mountPath, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
 			AllowOther: true,
@@ -48,6 +42,10 @@ func main() {
 
 			// safer in container environments
 			DirectMount: true,
+			Options: []string{
+				"direct_io",
+				"kernel_cache",
+			},
 		},
 	})
 
