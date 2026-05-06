@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
+	"sync"
 	"syscall"
 
 	"clipfs/config"
@@ -37,65 +40,109 @@ func (r *Root) OnAdd(ctx context.Context) {
 	}
 }
 
-func formatTime(seconds float64) string {
-	return fmt.Sprintf("%.2f", seconds)
-}
+// --------------------
+// Virtual File
+// --------------------
 
 type VirtualFile struct {
 	fs.Inode
+
 	name string
 	clip config.Clip
+
+	mu   sync.Mutex
+	data []byte
+	once bool
 }
 
 func (f *VirtualFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Generate once per lifecycle (simple cache)
+	if !f.once {
+		data, err := f.generate()
+		if err != nil {
+			return nil, 0, syscall.EIO
+		}
+
+		f.data = data
+		f.once = true
+	}
+
 	return f, 0, 0
 }
 
 func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 
-	absoluteStart := f.clip.Start + float64(off)/1024.0 // crude mapping
+	if off >= int64(len(f.data)) {
+		return fuse.ReadResultData(nil), 0
+	}
 
+	end := int(off) + len(dest)
+	if end > len(f.data) {
+		end = len(f.data)
+	}
+
+	return fuse.ReadResultData(f.data[off:end]), 0
+}
+
+// --------------------
+// ffmpeg generation
+// --------------------
+
+func (f *VirtualFile) generate() ([]byte, error) {
 	cmd := exec.Command(
 		"ffmpeg",
-		"-ss", fmt.Sprintf("%.2f", absoluteStart),
-		"-to", fmt.Sprintf("%.2f", f.clip.End),
+		"-hide_banner",
+		"-loglevel", "error",
+		"-ss", formatTime(f.clip.Start),
+		"-to", formatTime(f.clip.End),
 		"-i", f.clip.Input,
 		"-c", "copy",
 		"-f", "matroska",
 		"pipe:1",
 	)
 
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
+	var out bytes.Buffer
+	cmd.Stdout = &out
 
 	err := cmd.Run()
 	if err != nil {
-		return fuse.ReadResultData(nil), syscall.EIO
+		return nil, err
 	}
 
-	data := stdout.Bytes()
-
-	if off >= int64(len(data)) {
-		return fuse.ReadResultData(nil), 0
-	}
-
-	end := int(off) + len(dest)
-	if end > len(data) {
-		end = len(data)
-	}
-
-	return fuse.ReadResultData(data[off:end]), 0
+	return out.Bytes(), nil
 }
 
+func formatTime(seconds float64) string {
+	return fmt.Sprintf("%.2f", seconds)
+}
+
+// --------------------
+// Metadata
+// --------------------
+
 func (f *VirtualFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	out.Size = f.fileSize()
+	out.Size = uint64(len(f.data))
 	out.Mode = syscall.S_IFREG | 0444
+
+	puid := parseEnvInt("PUID", 0)
+	pgid := parseEnvInt("PGID", 0)
+
+	out.Uid = uint32(puid)
+	out.Gid = uint32(pgid)
+
 	return 0
 }
 
-func (f *VirtualFile) fileSize() uint64 {
-	// very rough estimate:
-	// assume 1MB per minute (~placeholder for Jellyfin timeline)
-	duration := f.clip.End - f.clip.Start
-	return uint64(duration * 1024 * 1024 / 60)
+func parseEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return i
 }

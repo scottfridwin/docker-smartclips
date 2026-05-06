@@ -10,6 +10,7 @@ import (
 	clipfs "clipfs/internal/fs"
 
 	"github.com/hanwen/go-fuse/v2/fs"
+	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
 func getEnv(key, fallback string) string {
@@ -31,14 +32,26 @@ func main() {
 
 	root := clipfs.NewRoot(clips)
 
-	server, err := fs.Mount(mountPath, root, &fs.Options{})
+	server, err := fs.Mount(mountPath, root, &fs.Options{
+		MountOptions: fuse.MountOptions{
+			AllowOther: true,
+
+			// IMPORTANT: prevents dependency on fusermount identity resolution
+			FsName: "clipfs",
+			Name:   "clipfs",
+
+			// safer in container environments
+			DirectMount: true,
+		},
+	})
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	log.Println("ClipFS mounted at", mountPath)
 
-	// graceful shutdown
+	// graceful shutdown channel
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
@@ -46,7 +59,6 @@ func main() {
 		<-sig
 		log.Println("Shutting down ClipFS...")
 		_ = server.Unmount()
-		os.Exit(0)
 	}()
 
 	server.Wait()

@@ -14,19 +14,18 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
-    fuse3 \
     ffmpeg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# FUSE needs this
-RUN mkdir -p /dev/fuse
+# runtime dirs only (NOT /dev/fuse)
+RUN mkdir -p /config /media /mnt/clipfs
 
 WORKDIR /app
 
 COPY --from=builder /src/clipfs /usr/local/bin/clipfs
+COPY docker/entrypoint.sh /entrypoint.sh
 
-RUN mkdir -p /config /media /mnt/clipfs
+RUN chmod +x /entrypoint.sh
 
-ENTRYPOINT ["clipfs"]
-CMD []
+ENTRYPOINT ["/entrypoint.sh"]
