@@ -50,8 +50,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	uid := getEnvInt("PUID", 0)
-	gid := getEnvInt("PGID", 0)
+	uid := os.Getuid()
+	gid := os.Getgid()
 
 	cachePath := getEnv("CLIPFS_CACHE_DIR", "/tmp/clipfs-cache")
 	cacheMaxMB := getEnvInt("CLIPFS_CACHE_MAX_MB", 1024)

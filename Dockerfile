@@ -22,7 +22,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # runtime dirs only (NOT /dev/fuse)
-RUN mkdir -p /config /media /mnt/clipfs
+RUN mkdir -p /config /media /mnt/clipfs /cache && \
+    chmod 777 /mnt/clipfs /cache
+
+# Allow non-root users to use FUSE with allow_other
+RUN echo 'user_allow_other' >> /etc/fuse.conf
 
 WORKDIR /app
 

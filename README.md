@@ -14,12 +14,16 @@ services:
     image: ghcr.io/scottfridwin/docker-smartclips:latest
     container_name: smartclips
     network_mode: none
+    read_only: true
+    user: "1000:1000"
     cap_add:
       - SYS_ADMIN
     devices:
       - /dev/fuse:/dev/fuse
     security_opt:
       - apparmor:unconfined
+    tmpfs:
+      - /tmp
     volumes:
       - ./clips.json:/config/clips.json:ro
       - /path/to/media:/media:ro
@@ -31,9 +35,10 @@ services:
       - CLIPFS_MEDIA=/media
       - CLIPFS_CACHE_DIR=/cache
       - CLIPFS_CACHE_MAX_MB=2048
-      - PUID=1000
-      - PGID=1000
     restart: unless-stopped
+
+volumes:
+  smartclips-cache:
 ```
 
 > **Important:** The host-side mount (`/mnt/smartclips`) must use `:rshared` propagation so the FUSE mount inside the container is visible on the host.
@@ -52,8 +57,8 @@ sudo mount --make-shared /mnt/smartclips
 | `CLIPFS_MEDIA` | *(empty)* | If set, prepended to relative `input` paths in clips.json |
 | `CLIPFS_CACHE_DIR` | `/tmp/clipfs-cache` | Directory for the disk-backed clip cache |
 | `CLIPFS_CACHE_MAX_MB` | `1024` | Maximum cache size in MB. LRU eviction when exceeded. |
-| `PUID` | `0` | UID reported for virtual file ownership |
-| `PGID` | `0` | GID reported for virtual file ownership |
+
+File ownership on virtual clips matches the `user:` specified in your compose file.
 
 ## clips.json Format
 
