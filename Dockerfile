@@ -28,6 +28,9 @@ RUN mkdir -p /config /media /mnt/clipfs /cache && \
 # Allow non-root users to use FUSE with allow_other
 RUN echo 'user_allow_other' >> /etc/fuse.conf
 
+# Make /etc/passwd writable so entrypoint can add arbitrary UIDs for fusermount3
+RUN chmod 666 /etc/passwd
+
 WORKDIR /app
 
 COPY --from=builder /src/clipfs /usr/local/bin/clipfs
