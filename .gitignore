@@ -1,0 +1,29 @@
+# Binaries
+clipfs/clipfs
+clipfs/clipfs.exe
+
+# Go build artifacts
+*.exe
+*.out
+*.test
+*.prof
+
+# Go modules cache (not needed in repo)
+vendor/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# FUSE / runtime mounts (IMPORTANT)
+mnt/
+mount/
+tmp-mount/
+
+# NEVER commit mounted filesystem directories
+/tmp/mount*
+/mnt/*
