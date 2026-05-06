@@ -62,9 +62,10 @@ func main() {
 	// ✅ IMPORTANT: use fs.Mount but DO NOT rely on extra heuristic flags
 	server, err := fs.Mount(mountPath, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
-			AllowOther: true,
-			FsName:     "clipfs",
-			Name:       "clipfs",
+			AllowOther:  true,
+			FsName:      "clipfs",
+			Name:        "clipfs",
+			AutoUnmount: true,
 		},
 	})
 
