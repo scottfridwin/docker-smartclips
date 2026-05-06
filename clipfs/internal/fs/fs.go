@@ -36,8 +36,9 @@ func NewRoot(clips []config.Clip, uid, gid int, diskCache *cache.DiskCache) *Roo
 
 func (r *Root) OnAdd(ctx context.Context) {
 	for _, clip := range r.clips {
+		filename := clip.Output + ".mkv"
 		file := &VirtualFile{
-			name: clip.Output,
+			name: filename,
 			clip: clip,
 			root: r,
 		}
@@ -46,7 +47,7 @@ func (r *Root) OnAdd(ctx context.Context) {
 			Mode: syscall.S_IFREG,
 		})
 
-		r.AddChild(clip.Output, inode, false)
+		r.AddChild(filename, inode, false)
 	}
 }
 

@@ -1,13 +1,13 @@
 [
     {
         "input": "/media/musical.mkv",
-        "output": "song1.mkv",
+        "output": "song1",
         "start": 120,
         "end": 240
     },
     {
         "input": "/media/musical.mkv",
-        "output": "song2.mkv",
+        "output": "song2",
         "start": 300,
         "end": 360
     }

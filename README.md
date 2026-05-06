@@ -61,13 +61,13 @@ sudo mount --make-shared /mnt/smartclips
 [
     {
         "input": "/media/movie.mkv",
-        "output": "scene1.mkv",
+        "output": "scene1",
         "start": 120,
         "end": 240
     },
     {
         "input": "movie.mkv",
-        "output": "scene2.mkv",
+        "output": "scene2",
         "start": 300,
         "end": 360
     }
@@ -76,10 +76,12 @@ sudo mount --make-shared /mnt/smartclips
 
 | Field | Description |
 |-------|-------------|
-| `input` | Source media file path. Absolute paths are used as-is; relative paths are prefixed with `CLIPFS_MEDIA`. |
-| `output` | Virtual filename exposed in the FUSE mount |
+| `input` | Source media file path (any format ffmpeg supports). Absolute paths are used as-is; relative paths are prefixed with `CLIPFS_MEDIA`. |
+| `output` | Base filename (without extension). `.mkv` is appended automatically. |
 | `start` | Start time in seconds |
 | `end` | End time in seconds |
+
+> **Note:** All output clips are muxed into Matroska (`.mkv`) format regardless of the input format. MKV is used because it supports virtually all codec combinations and allows proper seek indexing.
 
 ## Required Docker Permissions
 
