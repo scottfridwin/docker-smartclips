@@ -22,6 +22,14 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
+
+	f, err := os.Open("/dev/fuse")
+	if err != nil {
+		log.Fatalf("FATAL: cannot access /dev/fuse: %v", err)
+	}
+	f.Close()
+	log.Println("DEBUG: /dev/fuse accessible at startup")
+
 	configPath := getEnv("CLIPFS_CONFIG", "clips.json")
 	mountPath := getEnv("CLIPFS_MOUNT", "/mnt/clipfs")
 
