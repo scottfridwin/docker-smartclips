@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"clipfs/config"
@@ -19,6 +20,15 @@ func getEnv(key, fallback string) string {
 		return fallback
 	}
 	return val
+}
+
+func getEnvInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return i
 }
 
 func main() {
@@ -39,7 +49,10 @@ func main() {
 		log.Fatal(err)
 	}
 
-	root := clipfs.NewRoot(clips)
+	uid := getEnvInt("PUID", 0)
+	gid := getEnvInt("PGID", 0)
+
+	root := clipfs.NewRoot(clips, uid, gid)
 
 	// ✅ IMPORTANT: use fs.Mount but DO NOT rely on extra heuristic flags
 	server, err := fs.Mount(mountPath, root, &fs.Options{

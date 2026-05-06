@@ -5,11 +5,11 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"os/exec"
-	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"clipfs/config"
 
@@ -17,13 +17,21 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 )
 
+const evictionTTL = 5 * time.Minute
+
 type Root struct {
 	fs.Inode
 	clips []config.Clip
+	uid   uint32
+	gid   uint32
 }
 
-func NewRoot(clips []config.Clip) *Root {
-	return &Root{clips: clips}
+func NewRoot(clips []config.Clip, uid, gid int) *Root {
+	return &Root{
+		clips: clips,
+		uid:   uint32(uid),
+		gid:   uint32(gid),
+	}
 }
 
 func (r *Root) OnAdd(ctx context.Context) {
@@ -31,6 +39,7 @@ func (r *Root) OnAdd(ctx context.Context) {
 		file := &VirtualFile{
 			name: clip.Output,
 			clip: clip,
+			root: r,
 		}
 
 		inode := r.NewInode(ctx, file, fs.StableAttr{
@@ -50,44 +59,93 @@ type VirtualFile struct {
 
 	name string
 	clip config.Clip
+	root *Root
 
-	mu   sync.Mutex
-	data []byte
-	once bool
+	mu         sync.Mutex
+	data       atomic.Pointer[[]byte] // lock-free reads after generation
+	generated  atomic.Bool
+	lastAccess atomic.Int64 // unix timestamp of last read
 }
 
 func (f *VirtualFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-
-	// Generate once per lifecycle (simple cache)
-	if !f.once {
-		data, err := f.generate()
-		if err != nil {
-			return nil, 0, syscall.EIO
-		}
-
-		f.data = data
-		f.once = true
+	if err := f.ensureGenerated(); err != nil {
+		return nil, 0, syscall.EIO
 	}
-
+	f.touch()
 	return f, 0, 0
 }
 
-func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+func (f *VirtualFile) ensureGenerated() error {
+	if f.generated.Load() {
+		return nil
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	if off >= int64(len(f.data)) {
+	// Double-check after acquiring lock
+	if f.generated.Load() {
+		return nil
+	}
+
+	data, err := f.generate()
+	if err != nil {
+		return err
+	}
+
+	f.data.Store(&data)
+	f.generated.Store(true)
+	f.touch()
+
+	// Start eviction timer
+	go f.evictionLoop()
+
+	return nil
+}
+
+func (f *VirtualFile) touch() {
+	f.lastAccess.Store(time.Now().Unix())
+}
+
+func (f *VirtualFile) evictionLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if !f.generated.Load() {
+			return
+		}
+		lastAccess := time.Unix(f.lastAccess.Load(), 0)
+		if time.Since(lastAccess) > evictionTTL {
+			f.mu.Lock()
+			f.data.Store(nil)
+			f.generated.Store(false)
+			f.mu.Unlock()
+			log.Printf("Evicted cached data for %s (idle > %v)", f.name, evictionTTL)
+			return
+		}
+	}
+}
+
+func (f *VirtualFile) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	f.touch()
+
+	dataPtr := f.data.Load()
+	if dataPtr == nil {
+		return fuse.ReadResultData(nil), syscall.EIO
+	}
+	data := *dataPtr
+
+	if off >= int64(len(data)) {
 		return fuse.ReadResultData(nil), 0
 	}
 
 	end := int(off) + len(dest)
-	if end > len(f.data) {
-		end = len(f.data)
+	if end > len(data) {
+		end = len(data)
 	}
 
-	return fuse.ReadResultData(f.data[off:end]), 0
+	return fuse.ReadResultData(data[off:end]), 0
 }
 
 // --------------------
@@ -129,30 +187,20 @@ func formatTime(seconds float64) string {
 // --------------------
 
 func (f *VirtualFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	f.mu.Lock()
-	if f.once {
-		out.Size = uint64(len(f.data))
+	if f.generated.Load() {
+		dataPtr := f.data.Load()
+		if dataPtr != nil {
+			out.Size = uint64(len(*dataPtr))
+		} else {
+			out.Size = 1 << 62
+		}
 	} else {
-		// Report a large size so readers don't refuse to open a 0-byte file
 		out.Size = 1 << 62
 	}
-	f.mu.Unlock()
+
 	out.Mode = syscall.S_IFREG | 0444
-
-	puid := parseEnvInt("PUID", 0)
-	pgid := parseEnvInt("PGID", 0)
-
-	out.Uid = uint32(puid)
-	out.Gid = uint32(pgid)
+	out.Uid = f.root.uid
+	out.Gid = f.root.gid
 
 	return 0
-}
-
-func parseEnvInt(key string, fallback int) int {
-	v := os.Getenv(key)
-	i, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return i
 }
