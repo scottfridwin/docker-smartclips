@@ -4,12 +4,12 @@ ARG TARGETARCH
 
 WORKDIR /src
 
-COPY clipfs/ .
+COPY smartclips/ .
 
 RUN go mod tidy
 
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
-    go build -o clipfs ./cmd/clipfs
+    go build -o smartclips ./cmd/smartclips
 
 
 FROM debian:bookworm-slim
@@ -21,8 +21,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # runtime dirs only (NOT /dev/fuse)
-RUN mkdir -p /config /media /mnt/clipfs /cache && \
-    chmod 777 /mnt/clipfs /cache
+RUN mkdir -p /config /media /mnt/smartclips /cache && \
+    chmod 777 /mnt/smartclips /cache
 
 # Allow non-root users to use FUSE with allow_other
 RUN echo 'user_allow_other' >> /etc/fuse.conf
@@ -32,7 +32,7 @@ RUN chmod 666 /etc/passwd
 
 WORKDIR /app
 
-COPY --from=builder /src/clipfs /usr/local/bin/clipfs
+COPY --from=builder /src/smartclips /usr/local/bin/smartclips
 COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh

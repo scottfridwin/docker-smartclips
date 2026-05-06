@@ -4,7 +4,7 @@ A Docker container that exposes virtual video clips via a FUSE filesystem. Defin
 
 ## How it works
 
-ClipFS mounts a FUSE filesystem inside the container. Each entry in your `clips.json` becomes a virtual file that, when read, extracts the specified time range from the source media using `ffmpeg -c copy` (no re-encoding).
+SmartClips mounts a FUSE filesystem inside the container. Each entry in your `clips.json` becomes a virtual file that, when read, extracts the specified time range from the source media using `ffmpeg -c copy` (no re-encoding).
 
 ## Quick Start
 
@@ -27,14 +27,14 @@ services:
     volumes:
       - ./clips.json:/config/clips.json:ro
       - /path/to/media:/media:ro
-      - /mnt/smartclips:/mnt/clipfs:rshared
+      - /mnt/smartclips:/mnt/smartclips:rshared
       - smartclips-cache:/cache
     environment:
-      - CLIPFS_CONFIG=/config/clips.json
-      - CLIPFS_MOUNT=/mnt/clipfs
-      - CLIPFS_MEDIA=/media
-      - CLIPFS_CACHE_DIR=/cache
-      - CLIPFS_CACHE_MAX_MB=2048
+      - SMARTCLIPS_CONFIG=/config/clips.json
+      - SMARTCLIPS_MOUNT=/mnt/smartclips
+      - SMARTCLIPS_MEDIA=/media
+      - SMARTCLIPS_CACHE_DIR=/cache
+      - SMARTCLIPS_CACHE_MAX_MB=2048
     restart: unless-stopped
 
 volumes:
@@ -52,11 +52,11 @@ sudo mount --make-shared /mnt/smartclips
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLIPFS_CONFIG` | `clips.json` | Path to the clip definitions JSON file |
-| `CLIPFS_MOUNT` | `/mnt/clipfs` | Mountpoint for the FUSE filesystem |
-| `CLIPFS_MEDIA` | *(empty)* | If set, prepended to relative `input` paths in clips.json |
-| `CLIPFS_CACHE_DIR` | `/tmp/clipfs-cache` | Directory for the disk-backed clip cache |
-| `CLIPFS_CACHE_MAX_MB` | `1024` | Maximum cache size in MB. LRU eviction when exceeded. |
+| `SMARTCLIPS_CONFIG` | `clips.json` | Path to the clip definitions JSON file |
+| `SMARTCLIPS_MOUNT` | `/mnt/smartclips` | Mountpoint for the FUSE filesystem |
+| `SMARTCLIPS_MEDIA` | *(empty)* | If set, prepended to relative `input` paths in clips.json |
+| `SMARTCLIPS_CACHE_DIR` | `/tmp/smartclips-cache` | Directory for the disk-backed clip cache |
+| `SMARTCLIPS_CACHE_MAX_MB` | `1024` | Maximum cache size in MB. LRU eviction when exceeded. |
 
 File ownership on virtual clips matches the `user:` specified in your compose file.
 
@@ -81,7 +81,7 @@ File ownership on virtual clips matches the `user:` specified in your compose fi
 
 | Field | Description |
 |-------|-------------|
-| `input` | Source media file path (any format ffmpeg supports). Absolute paths are used as-is; relative paths are prefixed with `CLIPFS_MEDIA`. |
+| `input` | Source media file path (any format ffmpeg supports). Absolute paths are used as-is; relative paths are prefixed with `SMARTCLIPS_MEDIA`. |
 | `output` | Base filename (without extension). `.mkv` is appended automatically. |
 | `start` | Start time in seconds |
 | `end` | End time in seconds |

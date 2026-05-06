@@ -16,7 +16,7 @@ jobs:
 
       - name: Test
         run: |
-          cd clipfs
+          cd smartclips
           go test ./...
           go vet ./...
-          go build ./cmd/clipfs
+          go build ./cmd/smartclips
