@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strconv"
@@ -107,10 +108,12 @@ func (f *VirtualFile) generate() ([]byte, error) {
 	)
 
 	var out bytes.Buffer
+	var errBuf bytes.Buffer
 	cmd.Stdout = &out
+	cmd.Stderr = &errBuf
 
-	err := cmd.Run()
-	if err != nil {
+	if err := cmd.Run(); err != nil {
+		log.Printf("ffmpeg error for %s: %s", f.name, errBuf.String())
 		return nil, err
 	}
 
@@ -126,7 +129,14 @@ func formatTime(seconds float64) string {
 // --------------------
 
 func (f *VirtualFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	out.Size = uint64(len(f.data))
+	f.mu.Lock()
+	if f.once {
+		out.Size = uint64(len(f.data))
+	} else {
+		// Report a large size so readers don't refuse to open a 0-byte file
+		out.Size = 1 << 62
+	}
+	f.mu.Unlock()
 	out.Mode = syscall.S_IFREG | 0444
 
 	puid := parseEnvInt("PUID", 0)

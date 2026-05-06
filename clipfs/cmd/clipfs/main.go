@@ -32,8 +32,9 @@ func main() {
 
 	configPath := getEnv("CLIPFS_CONFIG", "clips.json")
 	mountPath := getEnv("CLIPFS_MOUNT", "/mnt/clipfs")
+	mediaPrefix := getEnv("CLIPFS_MEDIA", "")
 
-	clips, err := config.Load(configPath)
+	clips, err := config.Load(configPath, mediaPrefix)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,6 +53,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer server.Unmount()
 
 	log.Println("ClipFS mounted at", mountPath)
 
