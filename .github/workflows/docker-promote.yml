@@ -14,13 +14,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install skopeo
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
 
-      - name: Extract version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+      - name: Extract version and SHA
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          echo "SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
 
       - name: Login to GHCR
         run: |
@@ -29,12 +34,13 @@ jobs:
 
       - name: Promote image
         run: |
-          SRC="ghcr.io/${{ github.repository }}:main"
+          SRC="ghcr.io/${{ github.repository }}:${SHA}"
           DST_VERSION="ghcr.io/${{ github.repository }}:${VERSION}"
           DST_LATEST="ghcr.io/${{ github.repository }}:latest"
 
-          skopeo copy docker://$SRC docker://$DST_VERSION
-          skopeo copy docker://$SRC docker://$DST_LATEST
+          echo "Promoting ${SRC} -> ${DST_VERSION}, ${DST_LATEST}"
+          skopeo copy --all docker://$SRC docker://$DST_VERSION
+          skopeo copy --all docker://$SRC docker://$DST_LATEST
 
   release:
     runs-on: ubuntu-latest
