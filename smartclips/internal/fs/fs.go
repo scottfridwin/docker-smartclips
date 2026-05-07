@@ -139,7 +139,7 @@ func (r *Root) pruneEmptyDirs(parent *fs.Inode, parts []string) {
 	}
 
 	// After recursion, check if child is now empty
-	if child.Children() == 0 {
+	if len(child.Children()) == 0 {
 		parent.RmChild(parts[0])
 	}
 }
