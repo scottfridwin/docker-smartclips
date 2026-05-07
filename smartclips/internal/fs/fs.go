@@ -7,11 +7,13 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"syscall"
 
 	"smartclips/config"
 	"smartclips/internal/cache"
+	"smartclips/internal/nfo"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -41,53 +43,136 @@ func (r *Root) OnAdd(ctx context.Context) {
 	}
 }
 
+// getOrCreateDir walks/creates the directory path under parent, returning the leaf dir inode.
+func (r *Root) getOrCreateDir(ctx context.Context, parent *fs.Inode, path string) *fs.Inode {
+	parts := strings.Split(path, "/")
+	current := parent
+
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		child := current.GetChild(part)
+		if child == nil {
+			dir := &Dir{root: r}
+			child = current.NewInode(ctx, dir, fs.StableAttr{Mode: syscall.S_IFDIR})
+			current.AddChild(part, child, true)
+		}
+		current = child
+	}
+
+	return current
+}
+
 func (r *Root) addClip(ctx context.Context, clip config.Clip) {
-	filename := clip.Output + ".mkv"
+	// Determine parent directory
+	var parent *fs.Inode
+	if clip.Group != "" {
+		parent = r.getOrCreateDir(ctx, &r.Inode, clip.Group)
+	} else {
+		parent = &r.Inode
+	}
+
+	// Add the .mkv virtual file
+	mkvName := clip.Output + ".mkv"
 	file := &VirtualFile{
-		name: filename,
+		name: mkvName,
 		clip: clip,
 		root: r,
 	}
+	mkvInode := parent.NewInode(ctx, file, fs.StableAttr{Mode: syscall.S_IFREG})
+	parent.AddChild(mkvName, mkvInode, true)
 
-	inode := r.NewInode(ctx, file, fs.StableAttr{
-		Mode: syscall.S_IFREG,
-	})
+	// Add the .nfo virtual file if metadata is present
+	if clip.Metadata != nil {
+		nfoName := clip.Output + ".nfo"
+		nfoData := nfo.Generate(clip.NfoType, clip.Metadata)
+		nfoFile := &StaticFile{
+			data: nfoData,
+			root: r,
+		}
+		nfoInode := parent.NewInode(ctx, nfoFile, fs.StableAttr{Mode: syscall.S_IFREG})
+		parent.AddChild(nfoName, nfoInode, true)
+	}
+}
 
-	r.AddChild(filename, inode, true)
+// removeClip removes a clip's .mkv and .nfo from the tree.
+func (r *Root) removeClip(clip config.Clip) {
+	var parent *fs.Inode
+	if clip.Group != "" {
+		// Walk to the parent directory
+		parent = &r.Inode
+		parts := strings.Split(clip.Group, "/")
+		for _, part := range parts {
+			child := parent.GetChild(part)
+			if child == nil {
+				return
+			}
+			parent = child
+		}
+	} else {
+		parent = &r.Inode
+	}
+
+	parent.RmChild(clip.Output + ".mkv")
+	parent.RmChild(clip.Output + ".nfo")
+
+	// Clean up empty parent directories
+	if clip.Group != "" {
+		r.pruneEmptyDirs(&r.Inode, strings.Split(clip.Group, "/"))
+	}
+}
+
+// pruneEmptyDirs removes empty directories bottom-up.
+func (r *Root) pruneEmptyDirs(parent *fs.Inode, parts []string) {
+	if len(parts) == 0 {
+		return
+	}
+
+	child := parent.GetChild(parts[0])
+	if child == nil {
+		return
+	}
+
+	if len(parts) > 1 {
+		r.pruneEmptyDirs(child, parts[1:])
+	}
+
+	// After recursion, check if child is now empty
+	if child.Children() == 0 {
+		parent.RmChild(parts[0])
+	}
 }
 
 // Reload updates the FUSE tree to match the new clip list.
-// Adds new clips, removes deleted clips, leaves unchanged clips alone.
 func (r *Root) Reload(clips []config.Clip) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Build maps of old and new
 	newSet := make(map[string]config.Clip, len(clips))
 	for _, c := range clips {
-		newSet[c.Output] = c
+		newSet[c.FullPath()] = c
 	}
 
 	oldSet := make(map[string]config.Clip, len(r.clips))
 	for _, c := range r.clips {
-		oldSet[c.Output] = c
+		oldSet[c.FullPath()] = c
 	}
 
 	// Remove clips that no longer exist
-	for name := range oldSet {
-		if _, exists := newSet[name]; !exists {
-			filename := name + ".mkv"
-			r.RmChild(filename)
-			log.Printf("Reload: removed %s", filename)
+	for path, clip := range oldSet {
+		if _, exists := newSet[path]; !exists {
+			r.removeClip(clip)
+			log.Printf("Reload: removed %s", path)
 		}
 	}
 
 	// Add new clips
 	ctx := context.Background()
-	for name, clip := range newSet {
-		if _, exists := oldSet[name]; !exists {
+	for path, clip := range newSet {
+		if _, exists := oldSet[path]; !exists {
 			r.addClip(ctx, clip)
-			log.Printf("Reload: added %s.mkv", name)
+			log.Printf("Reload: added %s", path)
 		}
 	}
 
@@ -96,7 +181,56 @@ func (r *Root) Reload(clips []config.Clip) {
 }
 
 // --------------------
-// Virtual File
+// Dir - virtual directory node
+// --------------------
+
+type Dir struct {
+	fs.Inode
+	root *Root
+}
+
+func (d *Dir) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	out.Mode = syscall.S_IFDIR | 0555
+	out.Uid = d.root.uid
+	out.Gid = d.root.gid
+	return 0
+}
+
+// --------------------
+// StaticFile - in-memory virtual file (for .nfo)
+// --------------------
+
+type StaticFile struct {
+	fs.Inode
+	data []byte
+	root *Root
+}
+
+func (f *StaticFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	return nil, fuse.FOPEN_KEEP_CACHE, 0
+}
+
+func (f *StaticFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+	if off >= int64(len(f.data)) {
+		return fuse.ReadResultData(nil), 0
+	}
+	end := int(off) + len(dest)
+	if end > len(f.data) {
+		end = len(f.data)
+	}
+	return fuse.ReadResultData(f.data[off:end]), 0
+}
+
+func (f *StaticFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
+	out.Size = uint64(len(f.data))
+	out.Mode = syscall.S_IFREG | 0444
+	out.Uid = f.root.uid
+	out.Gid = f.root.gid
+	return 0
+}
+
+// --------------------
+// VirtualFile - ffmpeg-generated clip file
 // --------------------
 
 type VirtualFile struct {
@@ -121,14 +255,12 @@ func (f *VirtualFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, ui
 		return nil, 0, syscall.EIO
 	}
 
-	// Open a persistent file handle for this session
 	f.mu.RLock()
 	path := f.cachePath
 	f.mu.RUnlock()
 
 	fh, err := NewCacheFileHandle(path)
 	if err != nil {
-		// Cache may have been evicted; try once more
 		f.mu.Lock()
 		f.ready = false
 		f.mu.Unlock()
@@ -162,7 +294,6 @@ func (f *VirtualFile) ensureCached() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Double-check after lock
 	if f.ready {
 		if path, size, ok := f.root.cache.Get(f.cacheKey()); ok {
 			f.cachePath = path
@@ -171,14 +302,12 @@ func (f *VirtualFile) ensureCached() error {
 		}
 	}
 
-	// Get the target path and have ffmpeg write directly to it
 	outPath := f.root.cache.PathFor(f.cacheKey())
 	if err := f.generate(outPath); err != nil {
 		os.Remove(outPath)
 		return err
 	}
 
-	// Register the file in the cache (handles LRU eviction)
 	path, err := f.root.cache.Admit(f.cacheKey())
 	if err != nil {
 		return err
@@ -192,7 +321,7 @@ func (f *VirtualFile) ensureCached() error {
 }
 
 // --------------------
-// CacheFileHandle - persistent file handle for reads
+// CacheFileHandle
 // --------------------
 
 type CacheFileHandle struct {
@@ -217,12 +346,10 @@ func (fh *CacheFileHandle) Read(ctx context.Context, dest []byte, off int64) (fu
 	if off >= fh.size {
 		return fuse.ReadResultData(nil), 0
 	}
-
 	end := int64(len(dest))
 	if off+end > fh.size {
 		end = fh.size - off
 	}
-
 	buf := dest[:end]
 	n, _ := fh.file.ReadAt(buf, off)
 	return fuse.ReadResultData(buf[:n]), 0
@@ -233,7 +360,6 @@ func (fh *CacheFileHandle) Release(ctx context.Context) syscall.Errno {
 	return 0
 }
 
-// Ensure CacheFileHandle implements the needed interfaces
 var _ = (fs.FileReader)((*CacheFileHandle)(nil))
 var _ = (fs.FileReleaser)((*CacheFileHandle)(nil))
 
@@ -280,7 +406,6 @@ func (f *VirtualFile) Getattr(ctx context.Context, fh fs.FileHandle, out *fuse.A
 	if f.ready {
 		out.Size = uint64(f.cacheSize)
 	} else {
-		// Large dummy size so readers don't bail on 0 bytes
 		out.Size = 1 << 62
 	}
 	f.mu.RUnlock()
