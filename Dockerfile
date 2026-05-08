@@ -37,4 +37,9 @@ COPY docker/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh
 
+# If the FUSE mount disappears (crash/OOM), stat will hang or fail.
+# Docker will mark the container unhealthy so restart policies can recover it.
+HEALTHCHECK --interval=30s --timeout=5s --retries=2 \
+  CMD stat ${SMARTCLIPS_MOUNT:-/mnt/smartclips} >/dev/null 2>&1 || exit 1
+
 ENTRYPOINT ["/entrypoint.sh"]
