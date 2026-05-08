@@ -61,10 +61,10 @@ func main() {
 
 	server, err := fs.Mount(mountPath, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
-			AllowOther: true,
-			FsName:     "smartclips",
-			Name:       "smartclips",
-			Options:    []string{"auto_unmount"},
+			AllowOther:  true,
+			FsName:      "smartclips",
+			Name:        "smartclips",
+			DirectMount: true,
 		},
 	})
 
