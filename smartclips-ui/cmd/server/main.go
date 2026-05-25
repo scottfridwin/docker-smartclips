@@ -126,6 +126,54 @@ func mediaHandler(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, resolved)
 }
 
+// browseHandler lists directories and video files under the media path.
+func browseHandler(w http.ResponseWriter, r *http.Request) {
+	relPath := r.URL.Query().Get("path")
+	dir := filepath.Join(mediaPath, filepath.Clean("/"+relPath))
+	dir = filepath.Clean(dir)
+
+	// Security: must be within mediaPath
+	if !strings.HasPrefix(dir, filepath.Clean(mediaPath)) {
+		http.Error(w, "access denied", http.StatusForbidden)
+		return
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		http.Error(w, "cannot read directory: "+err.Error(), http.StatusNotFound)
+		return
+	}
+
+	videoExts := map[string]bool{
+		".mkv": true, ".mp4": true, ".avi": true, ".mov": true,
+		".wmv": true, ".flv": true, ".webm": true, ".m4v": true,
+		".ts": true, ".m2ts": true, ".mpg": true, ".mpeg": true,
+	}
+
+	type Entry struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		IsDir bool   `json:"is_dir"`
+	}
+
+	var results []Entry
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		entryRel := filepath.Join(relPath, name)
+		if e.IsDir() {
+			results = append(results, Entry{Name: name, Path: entryRel, IsDir: true})
+		} else if videoExts[strings.ToLower(filepath.Ext(name))] {
+			results = append(results, Entry{Name: name, Path: entryRel, IsDir: false})
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(results)
+}
+
 // probeHandler returns media duration and basic info via ffprobe.
 func probeHandler(w http.ResponseWriter, r *http.Request) {
 	input := r.URL.Query().Get("path")
@@ -218,6 +266,7 @@ func main() {
 
 	http.HandleFunc("/api/clips", apiHandler)
 	http.HandleFunc("/api/media", mediaHandler)
+	http.HandleFunc("/api/browse", browseHandler)
 	http.HandleFunc("/api/probe", probeHandler)
 	http.HandleFunc("/api/preview", previewHandler)
 	http.Handle("/", http.FileServer(http.Dir(staticDir)))

@@ -60,7 +60,14 @@ input, select, textarea { background: #0f172a; color: #eee; border: 1px solid #4
 <div class="modal-overlay" id="modal">
     <div class="modal">
         <h2>New Clip – Select Input File</h2>
-        <div class="form-group"><label>Input File Path</label><input id="f-input" placeholder="/media/file.mkv"></div>
+        <div class="form-group">
+            <label>Browse Media</label>
+            <div id="breadcrumb" style="margin-bottom:0.5rem;font-size:0.85rem;color:#94a3b8"></div>
+            <div id="file-browser" style="max-height:400px;overflow-y:auto;background:#0f172a;border-radius:4px;padding:0.5rem;border:1px solid #475569">
+                <div class="loading">Loading...</div>
+            </div>
+        </div>
+        <div class="form-group"><label>Or enter path manually</label><input id="f-input" placeholder="/media/file.mkv"></div>
         <div class="form-actions">
             <button class="btn-primary" onclick="goToEditor()">Continue →</button>
             <button class="btn-secondary" onclick="closeModal()">Cancel</button>
@@ -114,9 +121,56 @@ function openEditor(idx) {
 
 function openNewClip() {
     document.getElementById('modal').classList.add('active');
+    browseTo('');
 }
 
 function closeModal() { document.getElementById('modal').classList.remove('active'); }
+
+let currentBrowsePath = '';
+
+async function browseTo(path) {
+    currentBrowsePath = path;
+    const browser = document.getElementById('file-browser');
+    const breadcrumb = document.getElementById('breadcrumb');
+    browser.innerHTML = '<div class="loading">Loading...</div>';
+
+    // Build breadcrumb
+    const parts = path ? path.split('/') : [];
+    let bc = '<a href="#" onclick="browseTo(\'\');return false" style="color:#7dd3fc">/media</a>';
+    let accum = '';
+    for (const p of parts) {
+        accum += (accum ? '/' : '') + p;
+        const escapedPath = accum.replace(/'/g, "\\'");
+        bc += ` / <a href="#" onclick="browseTo('${escapedPath}');return false" style="color:#7dd3fc">${p}</a>`;
+    }
+    breadcrumb.innerHTML = bc;
+
+    try {
+        const res = await fetch(`/api/browse?path=${encodeURIComponent(path)}`);
+        if (!res.ok) { browser.innerHTML = '<div style="color:#ef4444">Error loading directory</div>'; return; }
+        const entries = await res.json();
+        if (!entries || entries.length === 0) {
+            browser.innerHTML = '<div style="color:#94a3b8">Empty directory</div>';
+            return;
+        }
+        browser.innerHTML = entries.map(e => {
+            const icon = e.is_dir ? '📁' : '🎬';
+            const escapedPath = e.path.replace(/'/g, "\\'");
+            if (e.is_dir) {
+                return `<div style="padding:0.3rem;cursor:pointer" onclick="browseTo('${escapedPath}')">${icon} ${e.name}</div>`;
+            } else {
+                return `<div style="padding:0.3rem;cursor:pointer;color:#7dd3fc" onclick="selectFile('${escapedPath}')">${icon} ${e.name}</div>`;
+            }
+        }).join('');
+    } catch (e) {
+        browser.innerHTML = '<div style="color:#ef4444">Failed to browse</div>';
+    }
+}
+
+function selectFile(path) {
+    document.getElementById('f-input').value = path;
+    toast('Selected: ' + path, 'success');
+}
 
 function goToEditor() {
     const input = document.getElementById('f-input').value.trim();
