@@ -8,14 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Version tag to release (e.g., v1.0.0). Promotes current main images."
+        description: "Version tag to release (e.g., v1.0.0). Promotes current main images. Leave empty to just build."
         required: false
         type: string
-      build_branch:
-        description: "Set to 'true' to build and push images from the current branch (tagged :sha-XXXXXXX only)."
-        required: false
-        type: boolean
-        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -66,7 +61,7 @@ jobs:
     name: Build ${{ matrix.image }}
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.build_branch == 'true')
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag == '')
     permissions:
       contents: read
       packages: write
@@ -140,6 +135,13 @@ jobs:
         image: [docker-smartclips, docker-smartclips-ui]
 
     steps:
+      - name: Verify main branch
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Release can only be triggered from the main branch (got $GITHUB_REF)"
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
