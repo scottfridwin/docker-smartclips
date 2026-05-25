@@ -9,8 +9,13 @@ on:
     inputs:
       release_tag:
         description: "Version tag to release (e.g., v1.0.0). Promotes current main images."
-        required: true
+        required: false
         type: string
+      build_branch:
+        description: "Set to 'true' to build and push images from the current branch (tagged :sha-XXXXXXX only)."
+        required: false
+        type: boolean
+        default: false
 
 env:
   REGISTRY: ghcr.io
@@ -54,13 +59,14 @@ jobs:
           fi
 
   # ----------------------------------------------------------
-  # Build: Build and push Docker images (main branch only)
+  # Build: Build and push Docker images
+  # Runs on push to main OR manual dispatch with build_branch=true
   # ----------------------------------------------------------
   build:
     name: Build ${{ matrix.image }}
     needs: test
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.build_branch == 'true')
     permissions:
       contents: read
       packages: write
@@ -83,7 +89,12 @@ jobs:
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.OWNER }}/${{ matrix.image }}"
           SHORT_SHA=$(echo "$GITHUB_SHA" | cut -c1-7)
-          TAGS="${IMAGE}:main,${IMAGE}:sha-${SHORT_SHA}"
+          TAGS="${IMAGE}:sha-${SHORT_SHA}"
+
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            TAGS="${TAGS},${IMAGE}:main"
+          fi
+
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Generated tags: ${TAGS}"
 
