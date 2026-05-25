@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>SmartClips Manager</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 1rem; }
+h1 { margin-bottom: 1rem; color: #7dd3fc; }
+.toolbar { margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+button { padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+.btn-primary { background: #3b82f6; color: #fff; }
+.btn-danger { background: #ef4444; color: #fff; }
+.btn-success { background: #22c55e; color: #fff; }
+.btn-secondary { background: #475569; color: #fff; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; }
+th, td { padding: 0.5rem; border: 1px solid #334155; text-align: left; }
+th { background: #0f172a; position: sticky; top: 0; }
+tr:nth-child(even) { background: #1e293b; }
+tr.selected { background: #1e3a5f; }
+input, select, textarea { background: #0f172a; color: #eee; border: 1px solid #475569; border-radius: 4px; padding: 0.4rem; width: 100%; }
+.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+.modal-overlay.active { display: flex; }
+.modal { background: #1e293b; padding: 1.5rem; border-radius: 8px; width: 95%; max-width: 600px; max-height: 90vh; overflow-y: auto; }
+.modal h2 { margin-bottom: 1rem; color: #7dd3fc; }
+.form-group { margin-bottom: 0.75rem; }
+.form-group label { display: block; margin-bottom: 0.25rem; color: #94a3b8; font-size: 0.85rem; }
+.form-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+.toast { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1.25rem; border-radius: 4px; color: #fff; z-index: 200; animation: fadeout 0.5s 2.5s forwards; }
+.toast.success { background: #22c55e; }
+.toast.error { background: #ef4444; }
+@keyframes fadeout { to { opacity: 0; } }
+</style>
+</head>
+<body>
+<h1><img src="/logo.svg" alt="SmartClips" style="height:1.5em;vertical-align:middle;margin-right:0.5rem">SmartClips Manager</h1>
+<div class="toolbar">
+    <button class="btn-primary" onclick="openEditor()">+ New Clip</button>
+    <button class="btn-danger" onclick="deleteSelected()">Delete Selected</button>
+    <button class="btn-success" onclick="saveAll()">Save Changes</button>
+    <button class="btn-secondary" onclick="refreshClips()">Refresh</button>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th><input type="checkbox" id="selectAll" onchange="toggleAll(this.checked)"></th>
+            <th>Group</th>
+            <th>Output</th>
+            <th>Input</th>
+            <th>Start</th>
+            <th>End</th>
+            <th>NFO Type</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody id="clips-body"></tbody>
+</table>
+
+<div class="modal-overlay" id="modal">
+    <div class="modal">
+        <h2 id="modal-title">New Clip</h2>
+        <div class="form-group"><label>Input Path</label><input id="f-input" placeholder="/media/file.mkv"></div>
+        <div class="form-group"><label>Output Name</label><input id="f-output" placeholder="Clip Name"></div>
+        <div class="form-group"><label>Start (seconds)</label><input id="f-start" type="number" step="0.1"></div>
+        <div class="form-group"><label>End (seconds)</label><input id="f-end" type="number" step="0.1"></div>
+        <div class="form-group"><label>Group</label><input id="f-group" placeholder="Optional group/folder"></div>
+        <div class="form-group"><label>NFO Type</label><input id="f-nfotype" placeholder="e.g. musicvideo, episode"></div>
+        <div class="form-group"><label>Metadata (JSON)</label><textarea id="f-metadata" rows="5" placeholder='{"title":"...","artist":"..."}'></textarea></div>
+        <div class="form-actions">
+            <button class="btn-primary" onclick="saveClip()">Save</button>
+            <button class="btn-secondary" onclick="closeModal()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+let clips = [];
+let editIndex = -1;
+
+async function refreshClips() {
+    const res = await fetch('/api/clips');
+    clips = await res.json();
+    render();
+}
+
+function render() {
+    const tbody = document.getElementById('clips-body');
+    tbody.innerHTML = clips.map((c, i) => `
+        <tr>
+            <td><input type="checkbox" class="row-check" data-idx="${i}"></td>
+            <td>${esc(c.group || '')}</td>
+            <td>${esc(c.output)}</td>
+            <td>${esc(c.input)}</td>
+            <td>${c.start}</td>
+            <td>${c.end}</td>
+            <td>${esc(c.nfo_type || '')}</td>
+            <td><button class="btn-secondary" onclick="openEditor(${i})">Edit</button></td>
+        </tr>
+    `).join('');
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+function toggleAll(checked) {
+    document.querySelectorAll('.row-check').forEach(cb => cb.checked = checked);
+}
+
+function deleteSelected() {
+    const indices = [...document.querySelectorAll('.row-check:checked')].map(cb => +cb.dataset.idx);
+    if (!indices.length) return;
+    if (!confirm(`Delete ${indices.length} clip(s)?`)) return;
+    clips = clips.filter((_, i) => !indices.includes(i));
+    render();
+    toast('Deleted locally. Click "Save Changes" to persist.', 'success');
+}
+
+function openEditor(idx) {
+    editIndex = idx !== undefined ? idx : -1;
+    const c = editIndex >= 0 ? clips[editIndex] : {};
+    document.getElementById('modal-title').textContent = editIndex >= 0 ? 'Edit Clip' : 'New Clip';
+    document.getElementById('f-input').value = c.input || '';
+    document.getElementById('f-output').value = c.output || '';
+    document.getElementById('f-start').value = c.start ?? '';
+    document.getElementById('f-end').value = c.end ?? '';
+    document.getElementById('f-group').value = c.group || '';
+    document.getElementById('f-nfotype').value = c.nfo_type || '';
+    document.getElementById('f-metadata').value = c.metadata ? JSON.stringify(c.metadata, null, 2) : '';
+    document.getElementById('modal').classList.add('active');
+}
+
+function closeModal() { document.getElementById('modal').classList.remove('active'); }
+
+function saveClip() {
+    const clip = {
+        input: document.getElementById('f-input').value,
+        output: document.getElementById('f-output').value,
+        start: parseFloat(document.getElementById('f-start').value) || 0,
+        end: parseFloat(document.getElementById('f-end').value) || 0,
+    };
+    const group = document.getElementById('f-group').value.trim();
+    if (group) clip.group = group;
+    const nfo = document.getElementById('f-nfotype').value.trim();
+    if (nfo) clip.nfo_type = nfo;
+    const metaStr = document.getElementById('f-metadata').value.trim();
+    if (metaStr) {
+        try { clip.metadata = JSON.parse(metaStr); }
+        catch (e) { toast('Invalid metadata JSON', 'error'); return; }
+    }
+    if (!clip.input || !clip.output) { toast('Input and Output are required', 'error'); return; }
+    if (editIndex >= 0) clips[editIndex] = clip;
+    else clips.push(clip);
+    closeModal();
+    render();
+    toast('Updated locally. Click "Save Changes" to persist.', 'success');
+}
+
+async function saveAll() {
+    const res = await fetch('/api/clips', { method: 'PUT', headers: {'Content-Type':'application/json'}, body: JSON.stringify(clips) });
+    if (res.ok) toast('Saved successfully!', 'success');
+    else toast('Save failed: ' + await res.text(), 'error');
+}
+
+function toast(msg, type) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+}
+
+refreshClips();
+</script>
+</body>
+</html>

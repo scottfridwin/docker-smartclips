@@ -42,6 +42,16 @@ jobs:
           skopeo copy --all docker://$SRC docker://$DST_VERSION
           skopeo copy --all docker://$SRC docker://$DST_LATEST
 
+      - name: Promote UI image
+        run: |
+          SRC="ghcr.io/${{ github.repository }}-ui:${SHA}"
+          DST_VERSION="ghcr.io/${{ github.repository }}-ui:${VERSION}"
+          DST_LATEST="ghcr.io/${{ github.repository }}-ui:latest"
+
+          echo "Promoting ${SRC} -> ${DST_VERSION}, ${DST_LATEST}"
+          skopeo copy --all docker://$SRC docker://$DST_VERSION
+          skopeo copy --all docker://$SRC docker://$DST_LATEST
+
   release:
     runs-on: ubuntu-latest
     permissions:

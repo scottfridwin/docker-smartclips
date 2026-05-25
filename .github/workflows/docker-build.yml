@@ -43,3 +43,14 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:main
             ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.SHA }}
+
+      - name: Build and push UI (immutable)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ui
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}-ui:main
+            ghcr.io/${{ github.repository }}-ui:${{ steps.meta.outputs.SHA }}

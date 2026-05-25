@@ -1,0 +1,28 @@
+FROM golang:1.26-bookworm AS builder
+
+ARG TARGETARCH
+
+WORKDIR /src
+
+COPY smartclips-ui/ .
+
+RUN go mod tidy
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -o smartclips-ui ./cmd/server
+
+
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=builder /src/smartclips-ui /usr/local/bin/smartclips-ui
+COPY --from=builder /src/static /app/static
+
+EXPOSE 8080
+
+ENTRYPOINT ["smartclips-ui"]

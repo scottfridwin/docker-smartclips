@@ -145,10 +145,54 @@ The container needs these capabilities to mount FUSE:
 - `devices: /dev/fuse` — the FUSE device node
 - `security_opt: apparmor:unconfined` — bypass AppArmor restrictions on mount (if applicable)
 
+## SmartClips UI
+
+A separate container image (`docker-smartclips-ui`) provides a web interface for managing `clips.json`. It is fully independent from the FUSE backend — if the UI goes down, clip serving continues unaffected.
+
+### Quick Start
+
+Add to your compose file:
+
+```yaml
+  smartclips-ui:
+    image: ghcr.io/scottfridwin/docker-smartclips-ui:latest
+    container_name: smartclips-ui
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./clips.json:/config/clips.json
+    environment:
+      - SMARTCLIPS_CONFIG=/config/clips.json
+    restart: unless-stopped
+```
+
+> **Note:** The UI has no built-in authentication. Place it behind a reverse proxy with auth if exposed beyond localhost.
+
+### UI Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SMARTCLIPS_CONFIG` | `/config/clips.json` | Path to the clips data file |
+| `SMARTCLIPS_UI_LISTEN` | `:8080` | Listen address |
+| `SMARTCLIPS_UI_STATIC` | `/app/static` | Static file directory |
+
+### API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/clips` | Returns the current clips array |
+| `PUT` | `/api/clips` | Replaces the entire clips array |
+
+The backend service will pick up changes automatically via its fsnotify file watcher.
+
 ## Building
 
 ```bash
+# Backend (FUSE filesystem)
 docker build -t docker-smartclips .
+
+# UI
+docker build -f Dockerfile.ui -t docker-smartclips-ui .
 ```
 
-The image supports multi-architecture builds (amd64, arm64) via Docker BuildKit's `TARGETARCH`.
+Both images support multi-architecture builds (amd64, arm64) via Docker BuildKit's `TARGETARCH`.

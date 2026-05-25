@@ -1,6 +1,8 @@
 # Binaries
 smartclips/smartclips
 smartclips/smartclips.exe
+smartclips-ui/smartclips-ui
+smartclips-ui/smartclips-ui.exe
 
 # Go build artifacts
 *.exe

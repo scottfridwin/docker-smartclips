@@ -1,4 +1,6 @@
 .git
+.github
 **/dist
 **/mount*
 *.log
+README.md
