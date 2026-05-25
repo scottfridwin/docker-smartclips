@@ -1,6 +1,6 @@
 # Binaries
-clipfs/clipfs
-clipfs/clipfs.exe
+smartclips/smartclips
+smartclips/smartclips.exe
 
 # Go build artifacts
 *.exe

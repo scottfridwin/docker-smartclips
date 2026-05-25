@@ -1,5 +1,4 @@
 .git
-clipfs/clipfs
 **/dist
 **/mount*
 *.log

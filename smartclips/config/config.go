@@ -38,7 +38,7 @@ func Load(path string, mediaPrefix string) ([]Clip, error) {
 		return nil, err
 	}
 
-	// Validate unique output paths (group + output combo)
+	// Validate unique output paths (group + output combo) and clip times
 	seen := make(map[string]bool, len(clips))
 	for _, c := range clips {
 		key := c.FullPath()
@@ -46,6 +46,11 @@ func Load(path string, mediaPrefix string) ([]Clip, error) {
 			return nil, fmt.Errorf("duplicate clip path: %q", key)
 		}
 		seen[key] = true
+
+		// Validate clip times: start must be less than end
+		if c.Start >= c.End {
+			return nil, fmt.Errorf("invalid clip times for %q: start (%.2f) must be less than end (%.2f)", key, c.Start, c.End)
+		}
 	}
 
 	// If a media prefix is set, prepend it to relative input paths

@@ -313,7 +313,10 @@ func (f *VirtualFile) ensureCached() error {
 		return err
 	}
 
-	info, _ := os.Stat(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("cache: stat admitted file %s: %w", path, err)
+	}
 	f.cachePath = path
 	f.cacheSize = info.Size()
 	f.ready = true
