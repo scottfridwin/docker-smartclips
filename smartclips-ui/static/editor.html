@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>SmartClips - Edit Clip</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; padding: 1rem; }
+a { color: #7dd3fc; text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1 { margin-bottom: 1rem; color: #7dd3fc; font-size: 1.4rem; }
+.layout { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+.player-section { background: #0f172a; border-radius: 8px; padding: 1rem; }
+.form-section { background: #1e293b; border-radius: 8px; padding: 1rem; }
+
+video { width: 100%; border-radius: 4px; background: #000; max-height: 400px; }
+.player-controls { margin-top: 0.75rem; }
+
+.range-group { margin-bottom: 1rem; }
+.range-group label { display: block; color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.25rem; }
+.range-row { display: flex; align-items: center; gap: 0.5rem; }
+.range-row input[type="range"] { flex: 1; }
+.range-row .time-display { font-family: monospace; min-width: 80px; text-align: right; }
+
+.form-group { margin-bottom: 0.75rem; }
+.form-group label { display: block; margin-bottom: 0.25rem; color: #94a3b8; font-size: 0.85rem; }
+input, select, textarea { background: #0f172a; color: #eee; border: 1px solid #475569; border-radius: 4px; padding: 0.4rem; width: 100%; }
+textarea { resize: vertical; }
+
+button { padding: 0.5rem 1rem; border: none; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
+.btn-primary { background: #3b82f6; color: #fff; }
+.btn-success { background: #22c55e; color: #fff; }
+.btn-secondary { background: #475569; color: #fff; }
+.btn-warning { background: #f59e0b; color: #000; }
+.actions { display: flex; gap: 0.5rem; margin-top: 1rem; flex-wrap: wrap; }
+
+.toast { position: fixed; bottom: 1rem; right: 1rem; padding: 0.75rem 1.25rem; border-radius: 4px; color: #fff; z-index: 200; animation: fadeout 0.5s 2.5s forwards; }
+.toast.success { background: #22c55e; }
+.toast.error { background: #ef4444; }
+@keyframes fadeout { to { opacity: 0; } }
+
+.loading { color: #94a3b8; font-style: italic; }
+.set-btn { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+<h1><a href="/">← Back</a> &nbsp; <span id="page-title">New Clip</span></h1>
+
+<div class="layout">
+    <div class="player-section">
+        <div id="player-placeholder" class="loading">Enter an input file path and load the media to begin.</div>
+        <video id="video" style="display:none" controls></video>
+
+        <div class="player-controls">
+            <div class="range-group">
+                <label>Start Time</label>
+                <div class="range-row">
+                    <input type="range" id="start-slider" min="0" max="100" step="0.1" value="0">
+                    <span class="time-display" id="start-display">0:00.0</span>
+                    <button class="btn-secondary set-btn" onclick="setStartToCurrent()">Set to current</button>
+                </div>
+            </div>
+            <div class="range-group">
+                <label>End Time</label>
+                <div class="range-row">
+                    <input type="range" id="end-slider" min="0" max="100" step="0.1" value="100">
+                    <span class="time-display" id="end-display">0:00.0</span>
+                    <button class="btn-secondary set-btn" onclick="setEndToCurrent()">Set to current</button>
+                </div>
+            </div>
+            <div class="actions">
+                <button class="btn-warning" onclick="generatePreview()">▶ Preview Clip</button>
+                <button class="btn-secondary" onclick="seekToStart()">Seek to Start</button>
+                <button class="btn-secondary" onclick="seekToEnd()">Seek to End</button>
+            </div>
+        </div>
+
+        <div id="preview-section" style="margin-top:1rem;display:none">
+            <label style="color:#94a3b8;font-size:0.85rem">Preview (re-encoded clip):</label>
+            <video id="preview-video" controls style="width:100%;border-radius:4px;margin-top:0.5rem;max-height:300px"></video>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <div class="form-group">
+            <label>Input File Path</label>
+            <div style="display:flex;gap:0.5rem">
+                <input id="f-input" placeholder="/media/file.mkv">
+                <button class="btn-primary" onclick="loadMedia()" style="white-space:nowrap">Load Media</button>
+            </div>
+        </div>
+        <div class="form-group"><label>Output Name</label><input id="f-output" placeholder="Clip Name"></div>
+        <div class="form-group"><label>Group</label><input id="f-group" placeholder="Optional group/folder path"></div>
+        <div class="form-group"><label>NFO Type</label><input id="f-nfotype" placeholder="e.g. musicvideo, episode, movie"></div>
+        <div class="form-group">
+            <label>Metadata (JSON)</label>
+            <textarea id="f-metadata" rows="8" placeholder='{"title":"...","artist":"..."}'></textarea>
+        </div>
+
+        <div class="actions">
+            <button class="btn-success" onclick="saveClip()">💾 Save Clip</button>
+            <button class="btn-secondary" onclick="window.location='/'">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const video = document.getElementById('video');
+const previewVideo = document.getElementById('preview-video');
+const startSlider = document.getElementById('start-slider');
+const endSlider = document.getElementById('end-slider');
+const startDisplay = document.getElementById('start-display');
+const endDisplay = document.getElementById('end-display');
+
+let duration = 0;
+let editIndex = -1;
+let clips = [];
+
+// Parse URL params
+const params = new URLSearchParams(window.location.search);
+if (params.has('idx')) editIndex = parseInt(params.get('idx'));
+
+function formatTime(s) {
+    const m = Math.floor(s / 60);
+    const sec = (s % 60).toFixed(1);
+    return `${m}:${sec.padStart(4, '0')}`;
+}
+
+function updateSliderDisplays() {
+    const s = parseFloat(startSlider.value);
+    const e = parseFloat(endSlider.value);
+    startDisplay.textContent = formatTime(s);
+    endDisplay.textContent = formatTime(e);
+}
+
+startSlider.addEventListener('input', () => {
+    updateSliderDisplays();
+    if (video.src) video.currentTime = parseFloat(startSlider.value);
+});
+endSlider.addEventListener('input', () => {
+    updateSliderDisplays();
+    if (video.src) video.currentTime = parseFloat(endSlider.value);
+});
+
+function setStartToCurrent() {
+    startSlider.value = video.currentTime;
+    updateSliderDisplays();
+}
+function setEndToCurrent() {
+    endSlider.value = video.currentTime;
+    updateSliderDisplays();
+}
+function seekToStart() { video.currentTime = parseFloat(startSlider.value); }
+function seekToEnd() { video.currentTime = parseFloat(endSlider.value); }
+
+async function loadMedia() {
+    const input = document.getElementById('f-input').value.trim();
+    if (!input) { toast('Enter an input file path', 'error'); return; }
+
+    // Probe for duration
+    try {
+        const res = await fetch(`/api/probe?path=${encodeURIComponent(input)}`);
+        if (!res.ok) { toast('Cannot probe file: ' + await res.text(), 'error'); return; }
+        const info = await res.json();
+        duration = parseFloat(info.format.duration) || 0;
+    } catch (e) {
+        toast('Probe failed: ' + e.message, 'error');
+        return;
+    }
+
+    // Set video source
+    video.src = `/api/media?path=${encodeURIComponent(input)}`;
+    video.style.display = 'block';
+    document.getElementById('player-placeholder').style.display = 'none';
+
+    // Configure sliders
+    startSlider.max = duration;
+    endSlider.max = duration;
+    if (editIndex < 0) {
+        startSlider.value = 0;
+        endSlider.value = duration;
+    }
+    updateSliderDisplays();
+}
+
+async function generatePreview() {
+    const input = document.getElementById('f-input').value.trim();
+    const start = parseFloat(startSlider.value);
+    const end = parseFloat(endSlider.value);
+
+    if (!input) { toast('Load media first', 'error'); return; }
+    if (start >= end) { toast('Start must be before end', 'error'); return; }
+
+    toast('Generating preview...', 'success');
+    const url = `/api/preview?path=${encodeURIComponent(input)}&start=${start}&end=${end}`;
+    previewVideo.src = url;
+    document.getElementById('preview-section').style.display = 'block';
+}
+
+async function saveClip() {
+    const clip = {
+        input: document.getElementById('f-input').value.trim(),
+        output: document.getElementById('f-output').value.trim(),
+        start: parseFloat(startSlider.value) || 0,
+        end: parseFloat(endSlider.value) || 0,
+    };
+    const group = document.getElementById('f-group').value.trim();
+    if (group) clip.group = group;
+    const nfo = document.getElementById('f-nfotype').value.trim();
+    if (nfo) clip.nfo_type = nfo;
+    const metaStr = document.getElementById('f-metadata').value.trim();
+    if (metaStr) {
+        try { clip.metadata = JSON.parse(metaStr); }
+        catch (e) { toast('Invalid metadata JSON', 'error'); return; }
+    }
+    if (!clip.input || !clip.output) { toast('Input and Output are required', 'error'); return; }
+    if (clip.start >= clip.end) { toast('Start must be before end', 'error'); return; }
+
+    // Fetch current clips, update, save
+    const res = await fetch('/api/clips');
+    clips = await res.json();
+
+    if (editIndex >= 0 && editIndex < clips.length) {
+        clips[editIndex] = clip;
+    } else {
+        clips.push(clip);
+    }
+
+    const saveRes = await fetch('/api/clips', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(clips)
+    });
+
+    if (saveRes.ok) {
+        toast('Clip saved!', 'success');
+        setTimeout(() => window.location = '/', 1000);
+    } else {
+        toast('Save failed: ' + await saveRes.text(), 'error');
+    }
+}
+
+function toast(msg, type) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 3000);
+}
+
+// On load: if editing, populate form
+async function init() {
+    if (editIndex >= 0) {
+        document.getElementById('page-title').textContent = 'Edit Clip';
+        const res = await fetch('/api/clips');
+        clips = await res.json();
+        if (editIndex < clips.length) {
+            const c = clips[editIndex];
+            document.getElementById('f-input').value = c.input || '';
+            document.getElementById('f-output').value = c.output || '';
+            document.getElementById('f-group').value = c.group || '';
+            document.getElementById('f-nfotype').value = c.nfo_type || '';
+            document.getElementById('f-metadata').value = c.metadata ? JSON.stringify(c.metadata, null, 2) : '';
+
+            // Load media and set sliders after probe
+            await loadMedia();
+            startSlider.value = c.start;
+            endSlider.value = c.end;
+            updateSliderDisplays();
+        }
+    } else if (params.has('input')) {
+        document.getElementById('f-input').value = params.get('input');
+        await loadMedia();
+    }
+}
+
+init();
+</script>
+</body>
+</html>

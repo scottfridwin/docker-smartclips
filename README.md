@@ -161,8 +161,10 @@ Add to your compose file:
       - "8080:8080"
     volumes:
       - ./clips.json:/config/clips.json
+      - /path/to/media:/media:ro
     environment:
       - SMARTCLIPS_CONFIG=/config/clips.json
+      - SMARTCLIPS_MEDIA=/media
     restart: unless-stopped
 ```
 
@@ -173,6 +175,7 @@ Add to your compose file:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SMARTCLIPS_CONFIG` | `/config/clips.json` | Path to the clips data file |
+| `SMARTCLIPS_MEDIA` | `/media` | Root path for media files (used for playback and preview) |
 | `SMARTCLIPS_UI_LISTEN` | `:8080` | Listen address |
 | `SMARTCLIPS_UI_STATIC` | `/app/static` | Static file directory |
 
@@ -182,6 +185,9 @@ Add to your compose file:
 |--------|----------|-------------|
 | `GET` | `/api/clips` | Returns the current clips array |
 | `PUT` | `/api/clips` | Replaces the entire clips array |
+| `GET` | `/api/media?path=...` | Serves a media file for in-browser playback (supports range requests) |
+| `GET` | `/api/probe?path=...` | Returns ffprobe JSON (duration, streams) for a media file |
+| `GET` | `/api/preview?path=...&start=...&end=...` | Generates and streams a re-encoded clip preview |
 
 The backend service will pick up changes automatically via its fsnotify file watcher.
 
