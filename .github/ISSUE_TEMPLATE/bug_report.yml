@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Image version
+      description: The image tag or digest you are running.
+      placeholder: ghcr.io/scottfridwin/smartclips:2.0.0
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Host and media server
+      description: Host OS and architecture, and the media server (and version) reading the clips.
+      placeholder: Ubuntu 24.04 (amd64), Jellyfin 10.11
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead. Include the clip definition if it's about one clip.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Container log
+      description: Run with `SMARTCLIPS_LOG_LEVEL=debug` if possible. Remove paths you do not want to share.
+      render: text
+  - type: textarea
+    id: probe
+    attributes:
+      label: "`ffprobe -v error -show_format -show_streams` of the source file (if a clip is wrong)"
+      render: text

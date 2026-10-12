@@ -1,6 +1,8 @@
 .git
 .github
-**/dist
-**/mount*
-*.log
-README.md
+.devcontainer
+*.md
+testdata
+scripts
+bin
+docs
