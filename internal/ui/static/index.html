@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="app.css">
+<title>SmartClips</title>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1><img src="logo.svg" alt="">SmartClips</h1>
+  <div class="toolbar">
+    <button id="btn-new" class="primary">New clip</button>
+    <button id="btn-save" class="success" disabled>Save changes</button>
+    <button id="btn-reload">Reload</button>
+    <span id="dirty" class="muted" hidden>Unsaved changes</span>
+  </div>
+</header>
+
+<main>
+  <input id="filter" type="search" placeholder="Filter clips…" aria-label="Filter clips">
+  <table>
+    <thead>
+      <tr><th>Clip</th><th>Source</th><th>Start</th><th>Length</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody id="clips"></tbody>
+  </table>
+  <p id="empty" class="muted" hidden>No clips yet. Use <b>New clip</b> to add one.</p>
+</main>
+
+<dialog id="editor">
+  <form method="dialog" id="editor-form">
+    <h2 id="editor-title">New clip</h2>
+
+    <label>Source video
+      <span class="row">
+        <input id="f-input" required placeholder="Movies/Title (Year)/Title.mkv">
+        <button type="button" id="btn-browse">Browse…</button>
+      </span>
+    </label>
+    <p id="probe-info" class="muted"></p>
+
+    <div class="times">
+      <div>
+        <label>Start <input id="f-start" required placeholder="1:02:03.5"></label>
+        <p id="start-info" class="muted"></p>
+        <span class="row">
+          <button type="button" id="btn-prev-key" title="Previous keyframe">◀ Keyframe</button>
+          <button type="button" id="btn-next-key" title="Next keyframe">Keyframe ▶</button>
+        </span>
+        <img id="start-frame" alt="Frame at the clip start" hidden>
+        <button type="button" id="btn-preview-start">Preview start</button>
+      </div>
+      <div>
+        <label>End <input id="f-end" required placeholder="1:05:00"></label>
+        <p id="end-info" class="muted"></p>
+        <img id="end-frame" alt="Frame at the clip end" hidden>
+        <button type="button" id="btn-preview-end">Preview end</button>
+      </div>
+    </div>
+    <video id="preview" controls hidden></video>
+
+    <label>Name <input id="f-output" required placeholder="Clip name (file name without .mkv)"></label>
+    <label>Folder <input id="f-group" placeholder="e.g. Chicago (2002) or Show/Season 01"></label>
+    <label>NFO type <select id="f-nfotype"><option value="">none</option></select></label>
+    <label>Metadata (JSON object, written to the NFO)
+      <textarea id="f-metadata" rows="6" placeholder='{"title": "…", "year": 2002, "genre": ["Musical"]}'></textarea>
+    </label>
+    <p id="editor-error" class="error" role="alert"></p>
+
+    <div class="actions">
+      <button type="button" id="btn-delete" class="danger">Delete</button>
+      <span class="spacer"></span>
+      <button type="button" id="btn-cancel">Cancel</button>
+      <button type="submit" class="primary">Apply</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="browser">
+  <h2>Choose a video</h2>
+  <p id="browse-path" class="path"></p>
+  <ul id="browse-list"></ul>
+  <div class="actions"><span class="spacer"></span><button type="button" id="btn-browse-close">Close</button></div>
+</dialog>
+
+<div id="toast" role="status" hidden></div>
+</body>
+</html>

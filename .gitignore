@@ -1,31 +1,10 @@
-# Binaries
-smartclips/smartclips
-smartclips/smartclips.exe
-smartclips-ui/smartclips-ui
-smartclips-ui/smartclips-ui.exe
-
-# Go build artifacts
-*.exe
-*.out
+# Build output
+/bin/
 *.test
+*.out
 *.prof
-
-# Go modules cache (not needed in repo)
-vendor/
 
 # OS / editor
 .DS_Store
-.vscode/
 .idea/
-
-# Logs
-*.log
-
-# FUSE / runtime mounts (IMPORTANT)
-mnt/
-mount/
-tmp-mount/
-
-# NEVER commit mounted filesystem directories
-/tmp/mount*
-/mnt/*
+.vscode/
