@@ -51,6 +51,7 @@ only need QEMU for the runtime stage's `apt-get`. go-fuse doesn't compile for 32
 | `internal/config` | Loading, validating (path confinement, names, metadata) and saving `clips.json` |
 | `internal/nfo` | NFO generation |
 | `internal/privs` | Dropping from root to `PUID:PGID` |
+| `internal/backup` | Optional scheduled copies of `clips.json` (run by the `ui` command) |
 | `internal/ui` | The web UI (static files embedded) and its JSON API |
 
 ### How a clip is built

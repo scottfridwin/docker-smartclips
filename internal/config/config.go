@@ -267,6 +267,11 @@ func ResolveInput(mediaRoot, input string) (string, error) {
 	if !within(root, p) {
 		return "", fmt.Errorf("%q is outside the media folder", input)
 	}
+	if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
+		if alt, ok := Replacement(p); ok {
+			p = alt
+		}
+	}
 	resolved, err := filepath.EvalSymlinks(p)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -294,6 +299,67 @@ func ResolveInput(mediaRoot, input string) (string, error) {
 func within(root, p string) bool {
 	rel, err := filepath.Rel(root, p)
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && !filepath.IsAbs(rel)
+}
+
+// VideoExts are the file extensions treated as video.
+var VideoExts = map[string]bool{
+	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".ts": true, ".mov": true, ".webm": true, ".mk3d": true,
+}
+
+var (
+	// "<title> - [edition]...[quality]<anything>.<ext>", as written by Radarr and Sonarr.
+	taggedName = regexp.MustCompile(`^(.*? - )((?:\[[^\]]*\])+)(.*)\.[A-Za-z0-9]+$`)
+	bracketTag = regexp.MustCompile(`\[[^\]]*\]`)
+	qualityTag = regexp.MustCompile(`(?i)\d{3,4}p|\b(blu-?ray|web(-?dl|rip)?|hdtv|dvd(rip|scr)?|sdtv|remux|raw-hd|br-disk|unknown|telesync|telecine|workprint|cam)\b`)
+)
+
+// identity is a file name without its quality tag, what follows it and the extension, so
+// "Movie (1999) - [Theatrical][Bluray-1080p].mkv" and its 2160p upgrade share one identity.
+// Tags before the quality tag (editions) are kept, so different cuts stay distinct.
+func identity(name string) (string, bool) {
+	m := taggedName.FindStringSubmatch(name)
+	if m == nil {
+		return "", false
+	}
+	tags := bracketTag.FindAllString(m[2], -1)
+	for i, t := range tags {
+		if qualityTag.MatchString(t) {
+			return m[1] + strings.Join(tags[:i], ""), true
+		}
+	}
+	return "", false
+}
+
+// Replacement finds the file that replaced the missing file p after a quality upgrade: a
+// video in the same folder with the same title and edition tags. The newest one wins.
+func Replacement(p string) (string, bool) {
+	want, ok := identity(filepath.Base(p))
+	if !ok {
+		return "", false
+	}
+	entries, err := os.ReadDir(filepath.Dir(p))
+	if err != nil {
+		return "", false
+	}
+	var best string
+	var bestTime time.Time
+	for _, e := range entries {
+		name := e.Name()
+		if !VideoExts[strings.ToLower(filepath.Ext(name))] {
+			continue
+		}
+		if id, ok := identity(name); !ok || id != want {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		if best == "" || info.ModTime().After(bestTime) {
+			best, bestTime = filepath.Join(filepath.Dir(p), name), info.ModTime()
+		}
+	}
+	return best, best != ""
 }
 
 // Relative returns p relative to mediaRoot when it is inside it, otherwise p.

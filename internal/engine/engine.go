@@ -55,6 +55,9 @@ type Status struct {
 	ActualStart float64 `json:"actual_start"`
 	ActualEnd   float64 `json:"actual_end"`
 	Size        int64   `json:"size,omitempty"`
+	// Source is the file in use, relative to the media folder; it differs from the clip's
+	// input when the configured file was replaced by an upgrade.
+	Source string `json:"source,omitempty"`
 }
 
 type clipState struct {
@@ -203,10 +206,18 @@ func (e *Engine) applyClip(path string, c config.Clip) {
 		e.sink.RemoveClip(path)
 		st.ready = nil
 	}
+	configured := c.Input
+	if !filepath.IsAbs(configured) {
+		configured = filepath.Join(e.opt.MediaRoot, configured)
+	}
+	if abs, err := filepath.Abs(configured); err == nil && abs != input && st.key != key {
+		e.log.Info("configured file is gone; using its replacement", "clip", path, "input", c.Input,
+			"using", config.Relative(e.opt.MediaRoot, input))
+	}
 	st.clip, st.input, st.key = c, input, key
 	if l, err := layout.Load(e.indexPath(key)); err == nil && e.dataValid(l) {
 		st.ready = l
-		st.status = statusOf(l)
+		st.status = e.statusOf(l)
 		e.publish(path, st)
 		return
 	}
@@ -227,8 +238,9 @@ func (e *Engine) dataValid(l *layout.Layout) bool {
 	return err == nil && id == l.Data
 }
 
-func statusOf(l *layout.Layout) Status {
-	return Status{State: StateReady, Kind: l.Kind, ActualStart: l.ActualStart, ActualEnd: l.ActualEnd, Size: l.Size}
+func (e *Engine) statusOf(l *layout.Layout) Status {
+	return Status{State: StateReady, Kind: l.Kind, ActualStart: l.ActualStart, ActualEnd: l.ActualEnd, Size: l.Size,
+		Source: config.Relative(e.opt.MediaRoot, l.Origin.Path)}
 }
 
 func (e *Engine) publish(path string, st *clipState) {
@@ -357,7 +369,7 @@ func (e *Engine) worker(ctx context.Context) {
 				e.log.Info("clip ready", "clip", path, "kind", l.Kind, "size", l.Size,
 					"actual_start", fmt.Sprintf("%.3f", l.ActualStart), "took", time.Since(t0).Round(time.Millisecond))
 				st.ready = l
-				st.status = statusOf(l)
+				st.status = e.statusOf(l)
 				e.publish(path, st)
 			}
 			e.mu.Unlock()

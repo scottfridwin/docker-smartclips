@@ -176,6 +176,39 @@ func TestChangedRemovedAndInvalid(t *testing.T) {
 	}
 }
 
+func TestFollowsQualityUpgrade(t *testing.T) {
+	e := setup(t)
+	old := filepath.Join(e.media, "Movie (2020) - [Bluray-1080p].mkv")
+	if err := os.Rename(filepath.Join(e.media, "sample.mkv"), old); err != nil {
+		t.Fatal(err)
+	}
+	sink := newSink()
+	eng := e.engine(sink)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	eng.Start(ctx)
+	clip := config.Clip{Input: "Movie (2020) - [Bluray-1080p].mkv", Output: "U", Start: 2, End: 6}
+	eng.Apply(file(clip))
+	first := sink.waitFor(t, "U", func(l *layout.Layout) bool { return l != nil })
+
+	// Radarr imports the upgrade under a new name and deletes the old file.
+	upgraded := filepath.Join(e.media, "Movie (2020) - [Bluray-2160p].mkv")
+	if err := os.Rename(old, upgraded); err != nil {
+		t.Fatal(err)
+	}
+	eng.Recheck()
+	second := sink.waitFor(t, "U", func(l *layout.Layout) bool { return l != nil && l != first })
+	if second.Origin.Path != upgraded {
+		t.Errorf("clip uses %s, want the upgraded file", second.Origin.Path)
+	}
+	eng.mu.Lock()
+	st := eng.clips["U"].status
+	eng.mu.Unlock()
+	if st.Source != "Movie (2020) - [Bluray-2160p].mkv" || st.State != StateReady {
+		t.Errorf("status %+v", st)
+	}
+}
+
 func TestRemuxNonMatroska(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
