@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -115,6 +116,9 @@ func runMount(log *slog.Logger) error {
 			return errors.New("running as root requires non-root PUID and PGID to switch to after mounting")
 		}
 	}
+	if uid < 0 || gid < 0 || uid > math.MaxUint32 || gid > math.MaxUint32 {
+		return fmt.Errorf("invalid user %d:%d", uid, gid)
+	}
 	log.Info("starting", "version", version, "config", cfgPath, "mount", mountPoint, "media", media,
 		"cache", cache, "uid", uid, "gid", gid)
 
@@ -124,7 +128,7 @@ func runMount(log *slog.Logger) error {
 	}
 
 	var eng *engine.Engine
-	root := clipfs.New(uid, gid, func(p string) { eng.Invalidate(p) })
+	root := clipfs.New(uint32(uid), uint32(gid), func(p string) { eng.Invalidate(p) })
 	eng = engine.New(engine.Options{
 		MediaRoot: media, CacheDir: cache, Workers: workers,
 		RecheckPeriod: time.Duration(recheck) * time.Minute,

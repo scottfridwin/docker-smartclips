@@ -259,14 +259,17 @@ func ResolveInput(mediaRoot, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	p := input
-	if !filepath.IsAbs(p) {
-		p = filepath.Join(root, p)
+	rel := filepath.Clean(input)
+	if filepath.IsAbs(rel) {
+		if rel, err = filepath.Rel(root, rel); err != nil {
+			return "", fmt.Errorf("%q is outside the media folder", input)
+		}
 	}
-	p = filepath.Clean(p)
-	if !within(root, p) {
+	// IsLocal rejects absolute paths, ".." components and empty paths.
+	if !filepath.IsLocal(rel) {
 		return "", fmt.Errorf("%q is outside the media folder", input)
 	}
+	p := filepath.Join(root, rel)
 	if _, err := os.Stat(p); errors.Is(err, fs.ErrNotExist) {
 		if alt, ok := Replacement(p); ok {
 			p = alt
@@ -283,7 +286,8 @@ func ResolveInput(mediaRoot, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !within(realRoot, resolved) {
+	// Symlinks must not lead out of the media folder.
+	if !strings.HasPrefix(resolved, strings.TrimSuffix(realRoot, string(filepath.Separator))+string(filepath.Separator)) {
 		return "", fmt.Errorf("%q resolves outside the media folder", input)
 	}
 	info, err := os.Stat(resolved)
@@ -294,11 +298,6 @@ func ResolveInput(mediaRoot, input string) (string, error) {
 		return "", fmt.Errorf("%q is not a file", input)
 	}
 	return p, nil
-}
-
-func within(root, p string) bool {
-	rel, err := filepath.Rel(root, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../") && !filepath.IsAbs(rel)
 }
 
 // VideoExts are the file extensions treated as video.
@@ -364,7 +363,7 @@ func Replacement(p string) (string, bool) {
 
 // Relative returns p relative to mediaRoot when it is inside it, otherwise p.
 func Relative(mediaRoot, p string) string {
-	if rel, err := filepath.Rel(mediaRoot, p); err == nil && within(mediaRoot, p) {
+	if rel, err := filepath.Rel(mediaRoot, p); err == nil && filepath.IsLocal(rel) {
 		return filepath.ToSlash(rel)
 	}
 	return p
