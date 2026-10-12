@@ -45,9 +45,9 @@ var (
 
 // New returns a root whose files are owned by uid:gid. onStale is called when a clip's
 // data file changed underneath it.
-func New(uid, gid int, onStale func(clipPath string)) *Root {
+func New(uid, gid uint32, onStale func(clipPath string)) *Root {
 	return &Root{
-		uid: uint32(uid), gid: uint32(gid), created: time.Now(),
+		uid: uid, gid: gid, created: time.Now(),
 		onStale: onStale, entries: map[string]entry{},
 	}
 }

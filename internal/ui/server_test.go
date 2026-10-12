@@ -11,7 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/scottfridwin/docker-smartclips/internal/backup"
 	"github.com/scottfridwin/docker-smartclips/internal/config"
 )
 
@@ -177,5 +179,41 @@ func TestFrameAndPreview(t *testing.T) {
 	}
 	if resp, _ := do(t, "GET", srv.URL+"/api/preview?path="+p+"&start=4&dur=600", "", nil); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("long preview: %d", resp.StatusCode)
+	}
+	if resp, got := do(t, "GET", srv.URL+"/api/frame?path="+p+"&t=500", "", nil); resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("frame past the end: %d %v", resp.StatusCode, got)
+	}
+}
+
+func TestProbeReportsUpgrade(t *testing.T) {
+	srv, _ := newServer(t)
+	srvDir := filepath.Join(srv.Config.Handler.(*Server).opt.MediaRoot, "Movies", "Sample (2024)")
+	if err := os.Rename(filepath.Join(srvDir, "sample.mkv"), filepath.Join(srvDir, "Sample (2024) - [Bluray-2160p].mkv")); err != nil {
+		t.Fatal(err)
+	}
+	q := strings.ReplaceAll("Movies/Sample (2024)/Sample (2024) - [Bluray-1080p].mkv", " ", "%20")
+	resp, got := do(t, "GET", srv.URL+"/api/probe?path="+q, "", nil)
+	if resp.StatusCode != 200 || got["resolved"] != "Movies/Sample (2024)/Sample (2024) - [Bluray-2160p].mkv" || got["byte_range"] != true {
+		t.Errorf("probe of an upgraded file: %d %v", resp.StatusCode, got)
+	}
+}
+
+func TestBackupStatus(t *testing.T) {
+	srv, cfg := newServer(t)
+	s := srv.Config.Handler.(*Server)
+	if _, got := do(t, "GET", srv.URL+"/api/clips", "", nil); got["backup"] != nil {
+		t.Errorf("backup reported while disabled: %v", got["backup"])
+	}
+	s.opt.Backup = &backup.Backup{Src: cfg, Dir: t.TempDir(), Keep: 3, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if _, err := config.Save(cfg, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.opt.Backup.Once(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	_, got := do(t, "GET", srv.URL+"/api/clips", "", nil)
+	b, ok := got["backup"].(map[string]any)
+	if !ok || b["copies"] != float64(1) || b["error"] != nil {
+		t.Errorf("backup status: %v", got["backup"])
 	}
 }

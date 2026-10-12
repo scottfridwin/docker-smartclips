@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/scottfridwin/docker-smartclips/internal/backup"
 	"github.com/scottfridwin/docker-smartclips/internal/config"
 	"github.com/scottfridwin/docker-smartclips/internal/mkv"
 )
@@ -36,6 +37,7 @@ type Options struct {
 	StatusPath string
 	FFmpeg     string
 	FFprobe    string
+	Backup     *backup.Backup // nil when backups are off
 }
 
 // Server is the UI HTTP handler.
@@ -45,11 +47,6 @@ type Server struct {
 	mux  *http.ServeMux
 	save sync.Mutex
 	jobs chan struct{} // bounds concurrent ffmpeg processes
-}
-
-// VideoExts are the file extensions offered when browsing.
-var VideoExts = map[string]bool{
-	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".ts": true, ".mov": true, ".webm": true, ".mk3d": true,
 }
 
 // New builds the handler.
@@ -111,6 +108,7 @@ type clipsResponse struct {
 	Version  string          `json:"version"`
 	Status   json.RawMessage `json:"status"`
 	NfoTypes []string        `json:"nfo_types"`
+	Backup   *backup.Status  `json:"backup,omitempty"`
 }
 
 func (s *Server) getClips(w http.ResponseWriter, _ *http.Request) {
@@ -126,7 +124,12 @@ func (s *Server) getClips(w http.ResponseWriter, _ *http.Request) {
 	if f.Clips == nil {
 		f.Clips = []config.Clip{}
 	}
-	writeJSON(w, http.StatusOK, clipsResponse{Clips: f.Clips, Version: f.Version, Status: status, NfoTypes: config.NfoTypes})
+	resp := clipsResponse{Clips: f.Clips, Version: f.Version, Status: status, NfoTypes: config.NfoTypes}
+	if s.opt.Backup != nil {
+		st := s.opt.Backup.Status()
+		resp.Backup = &st
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type putRequest struct {
@@ -218,7 +221,7 @@ func (s *Server) browse(w http.ResponseWriter, r *http.Request) {
 		}
 		if info.IsDir() {
 			out = append(out, browseEntry{Name: name, Dir: true})
-		} else if VideoExts[strings.ToLower(filepath.Ext(name))] {
+		} else if config.VideoExts[strings.ToLower(filepath.Ext(name))] {
 			out = append(out, browseEntry{Name: name, Size: info.Size()})
 		}
 	}
@@ -236,15 +239,21 @@ type probeResponse struct {
 	Keyframes []float64 `json:"keyframes"`
 	ByteRange bool      `json:"byte_range"` // clips are served by reference (no copy)
 	Note      string    `json:"note,omitempty"`
+	// Resolved is set when the input's file is gone and its upgrade is used instead.
+	Resolved string `json:"resolved,omitempty"`
 }
 
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
-	p, err := config.ResolveInput(s.opt.MediaRoot, r.URL.Query().Get("path"))
+	input := r.URL.Query().Get("path")
+	p, err := config.ResolveInput(s.opt.MediaRoot, input)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "input "+err.Error())
 		return
 	}
 	resp := probeResponse{Keyframes: []float64{}}
+	if filepath.Base(p) != filepath.Base(input) {
+		resp.Resolved = config.Relative(s.opt.MediaRoot, p)
+	}
 	if ext := strings.ToLower(filepath.Ext(p)); ext == ".mkv" || ext == ".webm" || ext == ".mk3d" {
 		if f, err := os.Open(p); err == nil {
 			info, _ := f.Stat()
@@ -314,8 +323,13 @@ func (s *Server) frame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	img, err := s.run(r.Context(), 30*time.Second, "-ss", fmt.Sprintf("%.3f", t), "-i", p,
-		"-frames:v", "1", "-vf", "scale=640:-2", "-f", "image2", "-c:v", "mjpeg", "-q:v", "5", "pipe:1")
-	if err != nil || len(img) == 0 {
+		"-frames:v", "1", "-vf", "scale=640:-2:out_range=full,format=yuvj420p",
+		"-f", "image2", "-c:v", "mjpeg", "-q:v", "5", "pipe:1")
+	if err == nil && len(img) == 0 {
+		writeError(w, http.StatusUnprocessableEntity, "no frame at this time (is it past the end of the video?)")
+		return
+	}
+	if err != nil {
 		s.log.Warn("frame failed", "err", err)
 		writeError(w, http.StatusInternalServerError, "couldn't extract a frame")
 		return

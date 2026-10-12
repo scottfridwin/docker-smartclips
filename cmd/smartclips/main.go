@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 
+	"github.com/scottfridwin/docker-smartclips/internal/backup"
 	"github.com/scottfridwin/docker-smartclips/internal/clipfs"
 	"github.com/scottfridwin/docker-smartclips/internal/config"
 	"github.com/scottfridwin/docker-smartclips/internal/engine"
@@ -114,6 +116,9 @@ func runMount(log *slog.Logger) error {
 			return errors.New("running as root requires non-root PUID and PGID to switch to after mounting")
 		}
 	}
+	if uid < 0 || gid < 0 || uid > math.MaxUint32 || gid > math.MaxUint32 {
+		return fmt.Errorf("invalid user %d:%d", uid, gid)
+	}
 	log.Info("starting", "version", version, "config", cfgPath, "mount", mountPoint, "media", media,
 		"cache", cache, "uid", uid, "gid", gid)
 
@@ -123,7 +128,7 @@ func runMount(log *slog.Logger) error {
 	}
 
 	var eng *engine.Engine
-	root := clipfs.New(uid, gid, func(p string) { eng.Invalidate(p) })
+	root := clipfs.New(uint32(uid), uint32(gid), func(p string) { eng.Invalidate(p) })
 	eng = engine.New(engine.Options{
 		MediaRoot: media, CacheDir: cache, Workers: workers,
 		RecheckPeriod: time.Duration(recheck) * time.Minute,
@@ -255,18 +260,28 @@ func watchConfig(ctx context.Context, log *slog.Logger, path string, eng *engine
 
 func runUI(log *slog.Logger) error {
 	listen := env("SMARTCLIPS_UI_LISTEN", ":8080")
+	cfgPath := env("SMARTCLIPS_CONFIG", "/data/clips.json")
+	bk, err := backupFromEnv(cfgPath, log)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
 		Addr: listen,
 		Handler: ui.New(ui.Options{
-			ConfigPath: env("SMARTCLIPS_CONFIG", "/data/clips.json"),
+			ConfigPath: cfgPath,
 			MediaRoot:  env("SMARTCLIPS_MEDIA", "/media"),
 			StatusPath: filepath.Join(env("SMARTCLIPS_CACHE_DIR", "/cache"), "status.json"),
+			Backup:     bk,
 		}, log),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if bk != nil {
+		log.Info("backups enabled", "dir", bk.Dir, "every", bk.Interval, "keep", bk.Keep)
+		go bk.Run(ctx.Done())
+	}
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -281,6 +296,26 @@ func runUI(log *slog.Logger) error {
 }
 
 const fuseSuperMagic = 0x65735546
+
+// backupFromEnv returns the scheduled backup configured by SMARTCLIPS_BACKUP_*, or nil.
+func backupFromEnv(cfgPath string, log *slog.Logger) (*backup.Backup, error) {
+	dir := os.Getenv("SMARTCLIPS_BACKUP_DIR")
+	if dir == "" {
+		return nil, nil
+	}
+	keep, err := envInt("SMARTCLIPS_BACKUP_KEEP", 30)
+	if err != nil {
+		return nil, err
+	}
+	if keep < 1 {
+		return nil, errors.New("SMARTCLIPS_BACKUP_KEEP must be at least 1")
+	}
+	interval, err := time.ParseDuration(env("SMARTCLIPS_BACKUP_INTERVAL", "1h"))
+	if err != nil || interval < time.Minute {
+		return nil, fmt.Errorf("SMARTCLIPS_BACKUP_INTERVAL must be a duration of at least 1m (e.g. 1h, 24h)")
+	}
+	return &backup.Backup{Src: cfgPath, Dir: dir, Keep: keep, Interval: interval, Log: log}, nil
+}
 
 // staleFUSE reports whether path is a FUSE mount (connected or not).
 func staleFUSE(path string) bool {

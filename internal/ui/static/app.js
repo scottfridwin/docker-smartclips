@@ -8,7 +8,8 @@ const state = {
   version: '',
   status: {},
   editing: -1,      // index being edited, -1 for new
-  probe: null,      // {path, duration, keyframes, byte_range, note}
+  probe: null,      // {path, duration, keyframes, byte_range, note, resolved}
+  probeError: '',
   dirty: false,
 };
 
@@ -104,6 +105,7 @@ async function load() {
     while (sel.options.length > 1) sel.remove(1);
     for (const t of data.nfo_types) sel.append(el('option', { value: t, textContent: t }));
     setDirty(false);
+    renderBackup(data.backup);
     render();
   } catch (e) {
     toast(`Couldn't load clips: ${e.message}`, 'error');
@@ -115,9 +117,29 @@ async function refreshStatus() {
   try {
     const data = await api('api/clips');
     state.status = data.status || {};
+    renderBackup(data.backup);
     if (!state.dirty && data.version !== state.version) return load();
     render();
   } catch { /* transient; next poll retries */ }
+}
+
+function ago(date) {
+  const s = Math.max(0, (Date.now() - date.getTime()) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+function renderBackup(b) {
+  const node = $('backup');
+  node.hidden = !b;
+  if (!b) return;
+  node.classList.toggle('warn', !!b.error);
+  const latest = b.latest && !b.latest.startsWith('0001') ? new Date(b.latest) : null;
+  node.textContent = b.error ? `Backup failed: ${b.error}`
+    : latest ? `Backed up ${ago(latest)} (${b.copies} kept)` : 'No backup yet';
+  node.title = `Backups in ${b.dir}`;
 }
 
 function statusBadge(c, i) {
@@ -139,9 +161,11 @@ function render() {
     const st = state.status[clipPath(c)];
     const actual = st && st.state === 'ready' && st.actual_start != null && Math.abs(st.actual_start - c.start) > 0.01
       ? el('div', { class: 'group', textContent: `starts at ${formatTime(st.actual_start)} (keyframe)` }) : null;
+    const upgraded = st && st.source && st.source !== c.input.replace(/^\/+/, '') && !c.input.endsWith(`/${st.source}`)
+      ? el('div', { class: 'group warn', textContent: `file replaced; using ${st.source.split('/').pop()}` }) : null;
     const tr = el('tr', { class: state.saved[i] !== JSON.stringify(c) ? 'changed' : '' },
       el('td', {}, el('div', { textContent: c.output }), c.group ? el('div', { class: 'group', textContent: c.group }) : null),
-      el('td', { class: 'source', textContent: c.input }),
+      el('td', { class: 'source' }, c.input, upgraded),
       el('td', {}, formatTime(c.start), actual),
       el('td', { textContent: formatTime(c.end - c.start) }),
       el('td', {}, statusBadge(c, i), st && st.size ? el('div', { class: 'group', textContent: formatBytes(st.size) }) : null,
@@ -170,6 +194,7 @@ function openEditor(i) {
   $('preview').hidden = true;
   $('preview').removeAttribute('src');
   state.probe = null;
+  state.probeError = '';
   $('probe-info').textContent = '';
   updateTimes();
   $('editor').showModal();
@@ -179,6 +204,7 @@ function openEditor(i) {
 async function probe() {
   const path = $('f-input').value.trim();
   state.probe = null;
+  state.probeError = '';
   $('probe-info').textContent = path ? 'Reading source…' : '';
   updateTimes();
   if (!path) return;
@@ -187,10 +213,13 @@ async function probe() {
     if ($('f-input').value.trim() !== path) return;
     state.probe = { path, ...p };
     const kf = p.keyframes.length;
-    $('probe-info').textContent = `Length ${formatTime(p.duration)}. ` + (p.byte_range
+    $('probe-info').textContent = (p.resolved ? `This file was replaced; clips use ${p.resolved}. ` : '')
+      + `Length ${formatTime(p.duration)}. ` + (p.byte_range
       ? `Clips are served straight from this file (no extra disk space); ${kf} keyframes.`
       : (p.note || ''));
   } catch (e) {
+    if ($('f-input').value.trim() !== path) return;
+    state.probeError = e.message;
     $('probe-info').textContent = e.message;
   }
   updateTimes();
@@ -230,19 +259,41 @@ function updateTimes() {
     $('end-info').textContent = '';
   }
   $('btn-prev-key').disabled = $('btn-next-key').disabled = !(p && p.keyframes.length);
+  const dur = p && p.duration ? p.duration : Infinity;
+  let startWhy = '', endWhy = '';
+  if (!p) startWhy = endWhy = state.probeError ? "Can't read this source"
+    : $('f-input').value.trim() ? 'Reading the source…' : 'Choose a source video';
+  else if (!Number.isFinite(start)) startWhy = 'Enter a start time';
+  else if (start >= dur) startWhy = 'The start is past the end of the video';
+  if (p && !endWhy) {
+    if (!Number.isFinite(end)) endWhy = 'Enter an end time';
+    else if (Number.isFinite(start) && end <= start) endWhy = 'The end must be after the start';
+  }
   clearTimeout(frameTimer);
   frameTimer = setTimeout(() => {
-    setFrame('start-frame', p && Number.isFinite(actual) ? actual : NaN);
-    setFrame('end-frame', p && Number.isFinite(end) && end > start ? Math.max(actual, end - 0.1) : NaN);
+    setFrame('start-frame', startWhy ? NaN : actual, startWhy);
+    // The last frame before the end; near the end of the file the video can stop before the audio.
+    const endAt = end > dur - 1 ? dur - 1 : end - 0.1;
+    setFrame('end-frame', endWhy ? NaN : Math.max(Number.isFinite(actual) ? actual : 0, endAt), endWhy);
   }, 400);
 }
 
-function setFrame(id, t) {
+function setFrame(id, t, why) {
   const img = $(id);
-  if (!Number.isFinite(t) || !state.probe) { img.hidden = true; img.removeAttribute('src'); return; }
+  const msg = $(`${id}-msg`);
+  if (!Number.isFinite(t) || !state.probe) {
+    img.hidden = true;
+    img.removeAttribute('src');
+    msg.textContent = why || '';
+    return;
+  }
   const url = `api/frame?path=${encodeURIComponent(state.probe.path)}&t=${t.toFixed(3)}`;
-  if (img.getAttribute('src') !== url) img.src = url;
-  img.hidden = false;
+  if (img.getAttribute('src') === url) return;
+  img.hidden = true;
+  msg.textContent = 'Loading frame…';
+  img.onload = () => { img.hidden = false; };
+  img.onerror = () => { img.hidden = true; msg.textContent = 'No frame at this time'; };
+  img.src = url;
 }
 
 function stepKeyframe(dir) {

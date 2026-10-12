@@ -147,6 +147,18 @@ proxy (the API can change which media files are exposed as clips).
 Invalid clips (unsafe names, paths outside the media folder, missing files, bad times) are skipped
 and reported in the log and the UI; the rest are served.
 
+### Quality upgrades
+
+Radarr and Sonarr rename a file when they upgrade it (`Movie (1999) - [Bluray-1080p].mkv` becomes
+`Movie (1999) - [Bluray-2160p].mkv`). When a clip's file no longer exists, SmartClips uses the file
+in the same folder with the same name up to the quality tag, so clips survive upgrades without edits.
+Edition tags before the quality tag (`[Theatrical]`, `[Director's Cut]`) still have to match, so
+different cuts of a movie stay separate. The extension and anything after the quality tag may
+change; if several files match, the newest wins. The UI shows when a clip uses a replacement file.
+
+A different release can be cut differently (studio logos, intros), so check the clip's start and end
+after an upgrade.
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -159,7 +171,17 @@ and reported in the log and the UI; the rest are served.
 | `SMARTCLIPS_RECHECK_MINUTES` | `15` | How often to re-read the clips file and check sources for changes (`mount`). |
 | `PUID`, `PGID` | — | User and group to run as after mounting. Required when started as root (`mount`). |
 | `SMARTCLIPS_UI_LISTEN` | `:8080` | UI listen address (`ui`). |
+| `SMARTCLIPS_BACKUP_DIR` | — | Turns on backups (`ui`): timestamped copies of `clips.json` (`clips-<UTC time>.json`) are written here when it changed. The directory must already exist, so a missing network mount fails loudly instead of filling local disk. |
+| `SMARTCLIPS_BACKUP_INTERVAL` | `1h` | How often to check for changes and back up (`ui`), e.g. `30m` or `24h`. |
+| `SMARTCLIPS_BACKUP_KEEP` | `30` | Number of copies to keep (`ui`); older copies are deleted. |
 | `SMARTCLIPS_LOG_LEVEL` | `info` | `debug` for more detail. |
+
+## Backups
+
+With `SMARTCLIPS_BACKUP_DIR` set, the UI service copies `clips.json` into that directory at start-up
+and then every `SMARTCLIPS_BACKUP_INTERVAL`, but only when it changed since the newest copy. The
+toolbar shows the last backup, or the error if one failed. To restore, copy a backup over
+`clips.json`; the mount service picks it up within a second.
 
 ## Security model
 
