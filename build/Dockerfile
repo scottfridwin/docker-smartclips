@@ -1,6 +1,6 @@
 # One image for both services: `smartclips mount` (FUSE) and `smartclips ui`.
 # The build stage runs on the build host and cross-compiles for the target platform.
-FROM --platform=$BUILDPLATFORM golang:1.27-trixie@sha256:2f84bc93ecfb2689f782b153fdcd368b5a7ab96c1386c65cdaccf35e726d6a44 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS build
 ARG VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH
