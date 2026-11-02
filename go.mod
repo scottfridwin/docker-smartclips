@@ -4,7 +4,7 @@ go 1.27
 
 require (
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/hanwen/go-fuse/v2 v2.12.0
+	github.com/hanwen/go-fuse/v2 v2.12.1
 )
 
 require golang.org/x/sys v0.44.0 // indirect
